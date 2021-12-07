@@ -1,0 +1,6 @@
+[submodule "libs/pybind11"]
+	path = libs/pybind11
+	url = https://github.com/pybind/pybind11
+[submodule "libs/eos"]
+	path = libs/eos
+	url = https://github.com/guilledk/eos
