@@ -50,6 +50,12 @@ py::class_<chain::flat_set<V>>(MODULE, CLASS_NAME) \
     });
 
 
+fc::sha256* bridge_sha256_hash_string(const std::string& s) {
+    auto ptr = new fc::sha256();
+    *ptr = ptr->hash(s);
+    return ptr;
+}
+
 
 PYBIND11_MODULE(py_eosio, root_mod) {
 
@@ -113,10 +119,17 @@ PYBIND11_MODULE(py_eosio, root_mod) {
      *
      */
 
-    py::class_<chain::bytes>(types_mod, "Bytes")
-        .def(py::init([] (vector<char> buf) {
-            return new chain::bytes(buf);
-        }));
+    py::class_<chain::private_key_type>(types_mod, "PrivateKey")
+        .def(py::init())
+        .def(py::init<const std::string&>())
+        .def(py::init<chain::private_key_type&>())
+        .def(py::init<const chain::private_key_type&>())
+        .def("generate", (chain::private_key_type (*)()) &chain::private_key_type::generate)
+        .def("get_public_key", &chain::private_key_type::get_public_key)
+        .def("sign", &chain::private_key_type::sign)
+        .def("generate_shared_secret", &chain::private_key_type::generate_shared_secret)
+        .def("__str__", &chain::private_key_type::to_string);
+
 
     py::class_<chain::signature_type>(types_mod, "Signature")
         .def(py::init())
@@ -218,8 +231,7 @@ PYBIND11_MODULE(py_eosio, root_mod) {
                 return a.data();
         })
         .def("data_size", &fc::sha256::data_size)
-        .def("hash_str", (fc::sha256 (*)()) &fc::sha256::hash<std::string>)
-        .def("hash", (fc::sha256 (*)()) &fc::sha256::hash<fc::sha256>)
+        .def("hash_str", &bridge_sha256_hash_string)
         .def(py::self == py::self)
         .def(py::self != py::self)
         .def(py::self >= py::self)
