@@ -50,13 +50,6 @@ py::class_<chain::flat_set<V>>(MODULE, CLASS_NAME) \
     });
 
 
-fc::sha256* bridge_sha256_hash_string(const std::string& s) {
-    auto ptr = new fc::sha256();
-    *ptr = ptr->hash(s);
-    return ptr;
-}
-
-
 PYBIND11_MODULE(py_eosio, root_mod) {
 
     py::module collections = root_mod.def_submodule("collections");
@@ -214,7 +207,16 @@ PYBIND11_MODULE(py_eosio, root_mod) {
         .def(py::init());
 
     py::class_<chain::controller::config>(config_mod, "ControllerConfig")
-        .def(py::init());
+        .def(py::init())
+        .def_readwrite(
+            "sender_bypass_whiteblacklist", &chain::controller::config::sender_bypass_whiteblacklist)
+        .def_readwrite("actor_whitelist", &chain::controller::config::actor_whitelist)
+        .def_readwrite("actor_blacklist", &chain::controller::config::actor_blacklist)
+        .def_readwrite("contract_whitelist", &chain::controller::config::contract_whitelist)
+        .def_readwrite("contract_blacklist", &chain::controller::config::contract_blacklist)
+        .def_readwrite("action_blacklist", &chain::controller::config::action_blacklist)
+        .def_readwrite("key_blacklist", &chain::controller::config::key_blacklist)
+        .def_readwrite("blog", &chain::controller::config::blog);
 
     /*
      *
@@ -227,11 +229,11 @@ PYBIND11_MODULE(py_eosio, root_mod) {
             return new fc::sha256(hex);
         }))
         .def("__str__", &fc::sha256::str)
+        .def("hash_string", (fc::sha256 (*) (const std::string&)) &fc::sha256::hash)
         .def("data", [](const fc::sha256 &a) {
                 return a.data();
         })
         .def("data_size", &fc::sha256::data_size)
-        .def("hash_str", &bridge_sha256_hash_string)
         .def(py::self == py::self)
         .def(py::self != py::self)
         .def(py::self >= py::self)
@@ -252,7 +254,7 @@ PYBIND11_MODULE(py_eosio, root_mod) {
                 return a.data();
         })
         .def("data_size", &fc::sha512::data_size)
-        .def("hash_str", (fc::sha512 (*)(const std::string&)) &fc::sha512::hash)
+        .def("hash_string", (fc::sha512 (*)(const std::string&)) &fc::sha512::hash)
         .def(py::self == py::self)
         .def(py::self != py::self)
         .def(py::self >= py::self)
@@ -268,9 +270,9 @@ PYBIND11_MODULE(py_eosio, root_mod) {
                 return a.data();
         })
         .def("data_size", &fc::ripemd160::data_size)
-        .def("hash_str", (fc::ripemd160 (*)()) &fc::ripemd160::hash<std::string>)
-        .def("hash_sha256", (fc::ripemd160 (*)()) &fc::ripemd160::hash<fc::sha256>)
-        .def("hash_sha512", (fc::ripemd160 (*)()) &fc::ripemd160::hash<fc::sha512>)
+        .def("hash_string", (fc::ripemd160 (*)(const std::string&)) &fc::ripemd160::hash)
+        .def("hash_sha256", (fc::ripemd160 (*)(const fc::sha256&)) &fc::ripemd160::hash)
+        .def("hash_sha512", (fc::ripemd160 (*)(const fc::sha512&)) &fc::ripemd160::hash)
         .def(py::self == py::self)
         .def(py::self != py::self)
         .def(py::self >= py::self)

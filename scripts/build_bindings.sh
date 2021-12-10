@@ -1,16 +1,12 @@
 #!/bin/sh
 
-mkdir -p py_eosio/bin
-
 docker build \
     --tag bindings-builder \
-    -f docker/bindings/Dockerfile .
+    -f docker/bindings/Dockerfile docker/bindings
 
 docker run \
     -it \
     --rm \
-    --mount type=bind,src="$(pwd)",target=/root/outside \
+    --mount type=bind,src="$(pwd)",target=/root/work/bindings \
     bindings-builder \
-    bash -c 'cp build/py-eosio/lib/* /root/outside/py_eosio/bin'
-
-chown guille -R py_eosio/
+    bash -c ". docker/bindings/perform_build.sh"

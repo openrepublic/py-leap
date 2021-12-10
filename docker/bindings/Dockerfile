@@ -61,10 +61,11 @@ RUN pyenv install 3.10.0
 RUN pyenv global 3.10.0
 
 WORKDIR /root/work/bindings
-COPY libs libs
-COPY src/CMakeLists.txt CMakeLists.txt
-COPY src/python_bindings.cpp python_bindings.cpp
 
-RUN cmake -DCMAKE_INSTALL_PREFIX="$(pwd)/build" .
-RUN make -j 4 
-RUN make install py_eosio
+# COPY libs libs
+# COPY src/CMakeLists.txt CMakeLists.txt
+# COPY src/python_bindings.cpp python_bindings.cpp
+
+# RUN cmake -DCMAKE_INSTALL_PREFIX="$(pwd)/build" .
+# RUN make -j 4 
+# RUN make install py_eosio
