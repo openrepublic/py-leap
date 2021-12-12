@@ -1,3 +1,5 @@
 .python-version
+**/build
+**/*.egg-info
 **/__pycache__
 **/*.so*
