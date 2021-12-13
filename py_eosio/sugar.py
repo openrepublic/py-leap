@@ -354,12 +354,11 @@ def wait_for_attr(
         raise TimeoutError("{} failed to be {}, value: \"{}\"".format(
             attr_path, expect if expect else 'not None', val))
 
-def get_container(dockerctl, repo: str, tag: str, *args, **kwargs):
+def get_container(dockerctl, image: str, *args, **kwargs):
     """
     Get already running container or start one up using an existing dockerctl
     instance.
     """
-    image = f'{repo}:{tag}'
     found = dockerctl.containers.list(
         filters={
             'ancestor': image,
@@ -376,10 +375,17 @@ def get_container(dockerctl, repo: str, tag: str, *args, **kwargs):
     else:
         local_images = [
             img.tags
-            for img in dockerctl.images.list(repo)
+            for img in dockerctl.containers.list(all=True)
         ]
 
         if image not in local_images:
+            splt_image = image.split(':')
+            if len(splt_image) == 2:
+                repo, tag = splt_image
+            else:
+                raise ValueError(
+                    f'Expected \'{image}\' to have \'repo:tag\' format.') 
+
             updates = {}
             for update in dockerctl.api.pull(
                 repo, tag=tag, stream=True, decode=True
