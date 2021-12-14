@@ -25,7 +25,9 @@ from .sugar import (
     random_eosio_name,
     wait_for_attr,
     Asset,
-    Symbol
+    Symbol,
+    docker_open_process,
+    docker_wait_process
 )
 from .typing import (
     ExecutionResult, 
@@ -59,7 +61,7 @@ class CLEOS:
     def run(
         self,
         cmd: List[str],
-        retry: int = 3,
+        retry: int = 0,
         *args, **kwargs
     ) -> ExecutionResult:
         """Run command inside the virtual testnet docker container.
@@ -78,6 +80,7 @@ class CLEOS:
         :rtype: :ref:`typing_exe_result`
         """
 
+        logging.info(f'exec run: {cmd}')
         for i in range(1, 2 + retry):
             ec, out = self.vtestnet.exec_run(
                 [str(chunk) for chunk in cmd], *args, **kwargs)
@@ -85,7 +88,11 @@ class CLEOS:
                 break
 
             logging.warning(f'cmd run retry num {i}...')
-                
+               
+        if ec != 0:
+            logging.error('command exited with non zero status:')
+            logging.error(out)
+
         return ec, out.decode('utf-8')
 
     def open_process(
@@ -107,16 +114,12 @@ class CLEOS:
             be consumed.
         :rtype: :ref:`typing_exe_stream`
         """
-        exec_id = self.client.api.exec_create(self.vtestnet.id, cmd, **kwargs)
-        exec_sock = self.client.api.exec_start(exec_id=exec_id, socket=True)
-        exec_sock._sock.setblocking(False)
-        return exec_id['Id'], exec_sock
+        return docker_open_process(self.client, self.vtestnet, cmd, **kwargs)
 
     def wait_process(
         self,
         exec_id: str,
-        exec_sock: Iterator[str],
-        watchdog_timeout: float = 0.3
+        exec_stream: Iterator[str]
     ) -> ExecutionResult:
         """Collect output from process stream, then inspect process and return
         exitcode.
@@ -127,18 +130,8 @@ class CLEOS:
         :return: Exitcode and process output.
         :rtype: :ref:`typing_exe_result`
         """
-        info = { 'Running': True }
 
-        out = ''
-        while info['Running']:
-            ready = select.select([exec_sock._sock], [], [], watchdog_timeout)
-            if ready[0]:
-                raw = exec_sock.readline()
-                # consume header
-                raw = raw[8:]
-                out += raw.decode('utf-8')
-
-            info = self.client.api.exec_inspect(exec_id)
+        return docker_wait_process(self.client, exec_id, exec_stream) 
 
     def start_keosd(self):
         exec_id, exec_stream = self.open_process(['keosd'])
@@ -162,7 +155,7 @@ class CLEOS:
             ['nodeos',
                 '-e',
                 '-p', 'eosio',
-                *['--plugin={p}' for p in plugins],
+                *[f'--plugin={p}' for p in plugins],
                 f'--http-server-address=\'{http_addr}\'',
                 f'--p2p-listen-endpoint=\'{p2p_addr}\'',
                 '--abi-serializer-max-time-ms=999999',
@@ -170,10 +163,48 @@ class CLEOS:
                 '--access-control-allow-origin=\'*\'',
                 '--contracts-console',
                 '--http-validate-host=false',
-                '--verbose-http-errors',
+                '--verbose-http-errors'
         ])
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
+
+    def start_nodeos_from_config(
+        self,
+        config_dir: str,
+        state_plugin: bool = False,
+        genesis: Optional[str] = None
+    ):
+        cmd = [
+            'nodeos',
+            '-e',
+            '-p', 'eosio',
+            f'--config-dir={config_dir}' 
+        ]
+        if state_plugin:
+            # https://github.com/EOSIO/eos/issues/6334
+            cmd += ['--disable-replay-opts']
+
+        if genesis:
+            cmd += [f'--genesis-json={genesis}']
+
+        logging.info(f'starting nodeos with cmd: {cmd}')
+        exec_id, exec_stream = self.open_process(cmd)
+        self.__nodeos_exec_id = exec_id
+        self.__nodeos_exec_stream = exec_stream
+
+    def is_nodeos_running(self) -> bool:
+        return self.client.api.exec_inspect(
+            self.__nodeos_exec_id)['Running']
+
+    def wait_produced(self):
+        exec_id = self.__nodeos_exec_id
+        exec_stream = self.__nodeos_exec_stream
+        
+        for chunk in exec_stream:
+            msg = chunk.decode('utf-8')
+            logging.info(msg.rstrip())
+            if 'Produced' in msg:
+                break
 
     def deploy_contract(
         self,
@@ -298,7 +329,7 @@ class CLEOS:
 
                 ``eosio.token``, ``eosio.msig``, ``eosio.wrap``
 
-            3) Initialize the ``SYS`` token.
+            3) Initialize the ``TLOS`` token.
             4) Activate v1 feature ``PREACTIVATE_FEATURE``.
             5) Deploy ``eosio.system`` to ``eosio`` account.
             6) Activate v2 features ``ONLY_BILL_FIRST_AUTHORIZER`` and ``RAM_RESTRICTIONS``.
@@ -431,7 +462,7 @@ class CLEOS:
 
         logging.info(f'imported {len(private_keys)} keys')
 
-    def setup_wallet(self):
+    def setup_wallet(self, dev_key: str):
         """Setup wallet acording to `telos docs <https://docs.telos.net/develope
         rs/platform/development-environment/create-development-wallet>`_.
         """
@@ -476,7 +507,7 @@ class CLEOS:
 
         # Step 5: Import the Development Key
         logging.info('import development key...')
-        self.import_key('5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3')
+        self.import_key(dev_key)
         logging.info('imported dev key')
 
     def get_feature_digest(self, feature_name: str) -> str:
@@ -654,8 +685,8 @@ class CLEOS:
         self,
         owner: str,
         name: str,
-        net: str = '1000.0000 SYS',
-        cpu: str = '1000.0000 SYS',
+        net: str = '1000.0000 TLOS',
+        cpu: str = '1000.0000 TLOS',
         ram: int = 8192,
         key: Optional[str] = None
     ) -> ExecutionResult:
@@ -696,8 +727,8 @@ class CLEOS:
         owner: str,
         names: List[str],
         keys: List[str],
-        net: str = '1000.0000 SYS',
-        cpu: str = '1000.0000 SYS',
+        net: str = '1000.0000 TLOS',
+        cpu: str = '1000.0000 TLOS',
         ram: int = 8192
     ) -> List[ExecutionResult]:
         """Same as :func:`~pytest_eosio.EOSIOTestSession.create_account_staked`,

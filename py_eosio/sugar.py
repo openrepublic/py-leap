@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import re
 import time
+import json
 import string
 import random
 import logging
@@ -17,6 +18,8 @@ from binascii import hexlify
 
 from natsort import natsorted
 from docker.errors import NotFound
+
+from .typing import ExecutionStream, ExecutionResult
 
 
 EOSIO_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
@@ -339,7 +342,12 @@ def wait_for_attr(
     """
     def get(val, path):
         for key in path:
-            val = val[key]
+            try:
+                val = val[key]
+
+            except KeyError as ke:
+                return ke
+
         return val
 
     start = time.time()
@@ -354,46 +362,100 @@ def wait_for_attr(
         raise TimeoutError("{} failed to be {}, value: \"{}\"".format(
             attr_path, expect if expect else 'not None', val))
 
-def get_container(dockerctl, image: str, *args, **kwargs):
+def get_container(
+    dockerctl,
+    image: str,
+    force_unique: bool = False,
+    *args, **kwargs
+):
     """
     Get already running container or start one up using an existing dockerctl
     instance.
     """
-    found = dockerctl.containers.list(
-        filters={
-            'ancestor': image,
-            'status': 'running'
-        }
-    )
-    if len(found) > 0:
+    if not force_unique:
+        found = dockerctl.containers.list(
+            filters={
+                'ancestor': image,
+                'status': 'running'
+            }
+        )
+        if len(found) > 0:
 
-        if len(found) > 1:
-            logging.warning('Found more than one posible cdt container')
+            if len(found) > 1:
+                logging.warning('Found more than one posible cdt container')
 
-        return found[0]
+            return found[0]
 
-    else:
-        local_images = [
-            img.tags
-            for img in dockerctl.containers.list(all=True)
-        ]
+    local_images = []
+    for img in dockerctl.images.list(all=True):
+        local_images += img.tags
 
-        if image not in local_images:
-            splt_image = image.split(':')
-            if len(splt_image) == 2:
-                repo, tag = splt_image
-            else:
-                raise ValueError(
-                    f'Expected \'{image}\' to have \'repo:tag\' format.') 
+    if image not in local_images:
+        splt_image = image.split(':')
+        if len(splt_image) == 2:
+            repo, tag = splt_image
+        else:
+            raise ValueError(
+                f'Expected \'{image}\' to have \'repo:tag\' format.') 
 
-            updates = {}
-            for update in dockerctl.api.pull(
-                repo, tag=tag, stream=True, decode=True
-            ):
-                if 'id' in update:
-                    _id = update['id']
-                    if _id not in updates or (updates[_id] != update['status']):
-                        updates[_id] = update['status']
-                        logging.info(f'{_id}: {update["status"]}')
+        updates = {}
+        for update in dockerctl.api.pull(
+            repo, tag=tag, stream=True, decode=True
+        ):
+            if 'id' in update:
+                _id = update['id']
+                if _id not in updates or (updates[_id] != update['status']):
+                    updates[_id] = update['status']
+                    logging.info(f'{_id}: {update["status"]}')
 
-        return dockerctl.containers.run(image, *args, **kwargs)
+    return dockerctl.containers.run(image, *args, **kwargs)
+
+
+def docker_open_process(
+    client,
+    cntr,
+    cmd: List[str],
+    **kwargs
+) -> ExecutionStream:
+    """Begin running the command inside the container, return the
+    internal docker process id, and a stream for the standard output.
+
+    :param cmd: List of individual string forming the command to execute in
+        the testnet container shell.
+    :param kwargs: A variable number of key word arguments can be
+        provided, as this function uses `exec_create & exec_start docker APIs
+        <https://docker-py.readthedocs.io/en/stable/api.html#module-dock
+        er.api.exec_api>`_.
+
+    :return: A tuple with the process execution id and the output stream to
+        be consumed.
+    :rtype: :ref:`typing_exe_stream`
+    """
+    exec_id = client.api.exec_create(cntr.id, cmd, **kwargs)
+    exec_stream = client.api.exec_start(exec_id=exec_id, stream=True)
+    return exec_id['Id'], exec_stream
+
+def docker_wait_process(
+    client,
+    exec_id: str,
+    exec_stream: Iterator[str]
+) -> ExecutionResult:
+    """Collect output from process stream, then inspect process and return
+    exitcode.
+
+    :param exec_id: Process execution id provided by docker engine.
+    :param exec_stream: Process output stream to be consumed.
+
+    :return: Exitcode and process output.
+    :rtype: :ref:`typing_exe_result`
+    """
+
+    out = ''
+    for chunk in exec_stream:
+        msg = chunk.decode('utf-8')
+        logging.info(msg.rstrip())
+        out += msg
+
+    info = client.api.exec_inspect(exec_id)
+
+    return info['ExitCode'], out
