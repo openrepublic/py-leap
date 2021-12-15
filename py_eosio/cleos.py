@@ -42,12 +42,18 @@ class CLEOS:
         self,
         docker_client: DockerClient, 
         vtestnet: Container,
-        url: str = 'http://127.0.0.1:8888'
+        url: str = 'http://127.0.0.1:8888',
+        logger = None
     ):
 
         self.client = docker_client
         self.vtestnet = vtestnet
         self.url = url
+
+        if logger is None:
+            self.logger = logging.getLogger('cleos')
+        else:
+            self.logger = logger
 
         ports = wait_for_attr(
             self.vtestnet,
@@ -80,18 +86,18 @@ class CLEOS:
         :rtype: :ref:`typing_exe_result`
         """
 
-        logging.info(f'exec run: {cmd}')
+        self.logger.info(f'exec run: {cmd}')
         for i in range(1, 2 + retry):
             ec, out = self.vtestnet.exec_run(
                 [str(chunk) for chunk in cmd], *args, **kwargs)
             if ec == 0:
                 break
 
-            logging.warning(f'cmd run retry num {i}...')
+            self.logger.warning(f'cmd run retry num {i}...')
                
         if ec != 0:
-            logging.error('command exited with non zero status:')
-            logging.error(out)
+            self.logger.error('command exited with non zero status:')
+            self.logger.error(out)
 
         return ec, out.decode('utf-8')
 
@@ -187,7 +193,7 @@ class CLEOS:
         if genesis:
             cmd += [f'--genesis-json={genesis}']
 
-        logging.info(f'starting nodeos with cmd: {cmd}')
+        self.logger.info(f'starting nodeos with cmd: {cmd}')
         exec_id, exec_stream = self.open_process(cmd)
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
@@ -202,7 +208,7 @@ class CLEOS:
         
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
-            logging.info(msg.rstrip())
+            self.logger.info(msg.rstrip())
             if 'Produced' in msg:
                 break
 
@@ -228,17 +234,17 @@ class CLEOS:
         :param create_account: ``True`` if target account should be created.
         :param staked: ``True`` if this account should use RAM & NET resources.
         """
-        logging.info(f'contract {contract_name}:')
+        self.logger.info(f'contract {contract_name}:')
         
         account_name = contract_name if not account_name else account_name
 
         if create_account:
-            logging.info('\tcreate account...')
+            self.logger.info('\tcreate account...')
             if staked:
                 self.create_account_staked('eosio', account_name)
             else:
                 self.create_account('eosio', account_name)
-            logging.info('\taccount created')
+            self.logger.info('\taccount created')
 
         if privileged:
             self.push_action(
@@ -247,22 +253,22 @@ class CLEOS:
                 'eosio@active'
             )
 
-        logging.info('\tgive .code permissions...')
+        self.logger.info('\tgive .code permissions...')
         cmd = [
             'cleos', '--url', self.url, 'set', 'account', 'permission', account_name,
             'active', '--add-code'
         ]
         ec, out = self.run(cmd)
-        logging.info(f'\tcmd: {cmd}')
-        logging.info(f'\t{out}')
+        self.logger.info(f'\tcmd: {cmd}')
+        self.logger.info(f'\t{out}')
         assert ec == 0
-        logging.info('\tpermissions granted.')
+        self.logger.info('\tpermissions granted.')
 
         ec, out = self.run(
             ['find', build_dir, '-type', 'f', '-name', '*.wasm'],
             retry=0
         )
-        logging.info(f'wasm candidates:\n{out}')
+        self.logger.info(f'wasm candidates:\n{out}')
         wasms = out.rstrip().split('\n')
 
         # Fuzzy match all .wasm files, select one most similar to {contract.name} 
@@ -280,10 +286,10 @@ class CLEOS:
         wasm_file = str(wasm_path).split('/')[-1]
         abi_file = wasm_file.replace('.wasm', '.abi')
 
-        logging.info('deploy...')
-        logging.info(f'wasm path: {wasm_path}')
-        logging.info(f'wasm: {wasm_file}')
-        logging.info(f'abi: {abi_file}')
+        self.logger.info('deploy...')
+        self.logger.info(f'wasm path: {wasm_path}')
+        self.logger.info(f'wasm: {wasm_file}')
+        self.logger.info(f'abi: {abi_file}')
         
         cmd = [
             'cleos', '--url', self.url, 'set', 'contract', account_name,
@@ -293,12 +299,12 @@ class CLEOS:
             '-p', f'{account_name}@active'
         ]
         
-        logging.info('contract deploy: ')
+        self.logger.info('contract deploy: ')
         ec, out = self.run(cmd, retry=6)
-        logging.info(out)
+        self.logger.info(out)
 
         if ec == 0:
-            logging.info('deployed')
+            self.logger.info('deployed')
 
         else:
             raise AssertionError(f'Couldn\'t deploy {account_name} contract.')
@@ -407,7 +413,7 @@ class CLEOS:
         assert ec == 0
         assert ('Private key' in out) and ('Public key' in out)
         lines = out.split('\n')
-        logging.info('created key pair')
+        self.logger.info('created key pair')
         return lines[0].split(' ')[2].rstrip(), lines[1].split(' ')[2].rstrip()
 
     def create_key_pairs(self, n: int) -> List[Tuple[str, str]]:
@@ -432,7 +438,7 @@ class CLEOS:
             lines = out.split('\n')
             keys.append((lines[0].split(' ')[2].rstrip(), lines[1].split(' ')[2].rstrip()))
 
-        logging.info(f'created {n} key pairs')
+        self.logger.info(f'created {n} key pairs')
         return keys
 
     def import_key(self, private_key: str):
@@ -442,7 +448,7 @@ class CLEOS:
             ['cleos', '--url', self.url, 'wallet', 'import', '--private-key', private_key]
         )
         assert ec == 0
-        logging.info('key imported')
+        self.logger.info('key imported')
 
     def import_keys(self, private_keys: List[str]):
         """Import a list of private keys into wallet inside testnet container.
@@ -460,7 +466,7 @@ class CLEOS:
         for ec, _ in results:
             assert ec == 0
 
-        logging.info(f'imported {len(private_keys)} keys')
+        self.logger.info(f'imported {len(private_keys)} keys')
 
     def setup_wallet(self, dev_key: str):
         """Setup wallet acording to `telos docs <https://docs.telos.net/develope
@@ -468,24 +474,24 @@ class CLEOS:
         """
 
         # Step 1: Create a Wallet
-        logging.info('create wallet...')
+        self.logger.info('create wallet...')
         ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'create', '--to-console'])
         wallet_key = out.split('\n')[-2].strip('\"')
         assert ec == 0
         assert len(wallet_key) == 53
-        logging.info('wallet created')
+        self.logger.info('wallet created')
 
         # Step 2: Open the Wallet
-        logging.info('open wallet...')
+        self.logger.info('open wallet...')
         ec, _ = self.run(['cleos', '--url', self.url, 'wallet', 'open'])
         assert ec == 0
         ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'list'])
         assert ec == 0
         assert 'default' in out
-        logging.info('wallet opened')
+        self.logger.info('wallet opened')
 
         # Step 3: Unlock it
-        logging.info('unlock wallet...')
+        self.logger.info('unlock wallet...')
         ec, out = self.run(
             ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', wallet_key]
         )
@@ -494,21 +500,21 @@ class CLEOS:
         ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'list'])
         assert ec == 0
         assert 'default *' in out
-        logging.info('wallet unlocked')
+        self.logger.info('wallet unlocked')
 
         # Step 4:  Import keys into your wallet
-        logging.info('import key...')
+        self.logger.info('import key...')
         ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'create_key'])
         public_key = out.split('\"')[1]
         assert ec == 0
         assert len(public_key) == 53
         self.dev_wallet_pkey = public_key
-        logging.info(f'imported {public_key}')
+        self.logger.info(f'imported {public_key}')
 
         # Step 5: Import the Development Key
-        logging.info('import development key...')
+        self.logger.info('import development key...')
         self.import_key(dev_key)
-        logging.info('imported dev key')
+        self.logger.info('imported dev key')
 
     def get_feature_digest(self, feature_name: str) -> str:
         """Given a feature name, query the v1 API endpoint: 
@@ -531,7 +537,7 @@ class CLEOS:
         else:
             raise ValueError(f'{feature_name} feature not found.')
 
-        logging.info(f'{feature_name} digest: {digest}')
+        self.logger.info(f'{feature_name} digest: {digest}')
         return digest
 
     def activate_feature_v1(self, feature_name: str):
@@ -539,7 +545,7 @@ class CLEOS:
         """
 
         digest = self.get_feature_digest(feature_name)
-        logging.info(f'activating {feature_name}...')
+        self.logger.info(f'activating {feature_name}...')
         r = requests.post(
             f'{self.endpoint}/v1/producer/schedule_protocol_feature_activations',
             json={
@@ -547,18 +553,18 @@ class CLEOS:
             }
         ).json()
         
-        logging.info(json.dumps(r, indent=4))
+        self.logger.info(json.dumps(r, indent=4))
 
         assert 'result' in r
         assert r['result'] == 'ok'
 
-        logging.info(f'{digest} active.')
+        self.logger.info(f'{digest} active.')
 
     def activate_feature(self, feature_name: str):
         """Given a v2 feature name, activate it.
         """
 
-        logging.info(f'activating {feature_name}...')
+        self.logger.info(f'activating {feature_name}...')
         digest = self.get_feature_digest(feature_name)
         ec, _ = self.push_action(
             'eosio', 'activate',
@@ -566,7 +572,7 @@ class CLEOS:
             'eosio@active'
         )
         assert ec == 0
-        logging.info(f'{digest} active.')
+        self.logger.info(f'{digest} active.')
 
     def push_action(
         self,
@@ -599,7 +605,7 @@ class CLEOS:
             else arg
             for arg in args
         ]
-        logging.info(f"push action: {action}({args}) as {permissions}")
+        self.logger.info(f"push action: {action}({args}) as {permissions}")
         cmd = [
             'cleos', '--url', self.url, 'push', 'action', contract, action,
             json.dumps(args), '-p', permissions, '-j', '-f'
@@ -607,11 +613,11 @@ class CLEOS:
         ec, out = self.run(cmd, retry=retry)
         try:
             out = json.loads(out)
-            logging.info(collect_stdout(out))
+            self.logger.info(collect_stdout(out))
             
         except (json.JSONDecodeError, TypeError):
-            logging.error(f'\n{out}')
-            logging.error(f'cmd line: {cmd}')
+            self.logger.error(f'\n{out}')
+            self.logger.error(f'cmd line: {cmd}')
 
         return ec, out
 
@@ -678,7 +684,7 @@ class CLEOS:
             key = self.dev_wallet_pkey
         ec, out = self.run(['cleos', '--url', self.url, 'create', 'account', owner, name, key])
         assert ec == 0
-        logging.info(f'created account: {name}')
+        self.logger.info(f'created account: {name}')
         return ec, out
 
     def create_account_staked(
@@ -719,7 +725,7 @@ class CLEOS:
             '--buy-ram-kbytes', ram
         ])
         assert ec == 0
-        logging.info(f'created staked account: {name}')
+        self.logger.info(f'created staked account: {name}')
         return ec, out
 
     def create_accounts_staked(
@@ -769,7 +775,7 @@ class CLEOS:
         ]
         for ec, _ in results:
             assert ec == 0
-        logging.info(f'created {len(names)} staked accounts.')
+        self.logger.info(f'created {len(names)} staked accounts.')
 
     def get_table(
         self,
@@ -800,7 +806,7 @@ class CLEOS:
                 '-l', '1000', *args
             ])
             if ec != 0:
-                logging.critical(out)
+                self.logger.critical(out)
 
             assert ec == 0
             out = json.loads(out)
