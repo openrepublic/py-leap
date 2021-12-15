@@ -366,12 +366,16 @@ def get_container(
     dockerctl,
     image: str,
     force_unique: bool = False,
+    logger=None,
     *args, **kwargs
 ):
     """
     Get already running container or start one up using an existing dockerctl
     instance.
     """
+    if logger is None:
+        logger = logging.getLogger()
+
     if not force_unique:
         found = dockerctl.containers.list(
             filters={
@@ -382,7 +386,7 @@ def get_container(
         if len(found) > 0:
 
             if len(found) > 1:
-                logging.warning('Found more than one posible cdt container')
+                logger.warning('Found more than one posible cdt container')
 
             return found[0]
 
@@ -406,7 +410,7 @@ def get_container(
                 _id = update['id']
                 if _id not in updates or (updates[_id] != update['status']):
                     updates[_id] = update['status']
-                    logging.info(f'{_id}: {update["status"]}')
+                    logger.info(f'{_id}: {update["status"]}')
 
     return dockerctl.containers.run(image, *args, **kwargs)
 
@@ -438,7 +442,8 @@ def docker_open_process(
 def docker_wait_process(
     client,
     exec_id: str,
-    exec_stream: Iterator[str]
+    exec_stream: Iterator[str],
+    logger=None
 ) -> ExecutionResult:
     """Collect output from process stream, then inspect process and return
     exitcode.
@@ -449,11 +454,13 @@ def docker_wait_process(
     :return: Exitcode and process output.
     :rtype: :ref:`typing_exe_result`
     """
+    if logger is None:
+        logger = logging.getLogger()
 
     out = ''
     for chunk in exec_stream:
         msg = chunk.decode('utf-8')
-        logging.info(msg.rstrip())
+        logger.info(msg.rstrip())
         out += msg
 
     info = client.api.exec_inspect(exec_id)
