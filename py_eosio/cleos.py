@@ -711,8 +711,9 @@ class CLEOS:
         :return: Exitcode and output.
         :rtype: :ref:`typing_exe_result`
         """
+        if key is None:
+            key = self.dev_wallet_pkey
 
-        key = self.dev_wallet_pkey
         ec, out = self.run([
             'cleos', '--url', self.url,
             'system',
@@ -1173,7 +1174,7 @@ class CLEOS:
         _from: str,
         _to: str,
         quantity: Union[str, Asset],
-        memo: str,
+        memo: str = '',
         token_contract: str = 'eosio.token'
     ) -> ActionResult:
         """Transfer tokens.
