@@ -79,7 +79,10 @@ class Asset:
 
 def asset_from_str(str_asset: str):
     numeric, sym = str_asset.split(' ')
-    precision = len(numeric) - numeric.index('.') - 1
+    if '.' not in numeric:
+        precision = 0
+    else:
+        precision = len(numeric) - numeric.index('.') - 1
     return Asset(float(numeric), Symbol(sym, precision))
 
 

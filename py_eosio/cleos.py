@@ -20,15 +20,22 @@ from difflib import SequenceMatcher
 from docker.client import DockerClient
 from docker.models.containers import Container
 
+from .init import (
+    sys_token_supply,
+    sys_token_init_issue,
+    ram_supply
+)
 from .sugar import (
     collect_stdout,
     random_eosio_name,
     wait_for_attr,
+    asset_from_str,
     Asset,
     Symbol,
     docker_open_process,
     docker_wait_process
 )
+from .tokens import sys_token, ram_token
 from .typing import (
     ExecutionResult, 
     ExecutionStream,
@@ -97,7 +104,7 @@ class CLEOS:
                
         if ec != 0:
             self.logger.error('command exited with non zero status:')
-            self.logger.error(out)
+            self.logger.error(out.decode('utf-8'))
 
         return ec, out.decode('utf-8')
 
@@ -139,8 +146,9 @@ class CLEOS:
 
         return docker_wait_process(self.client, exec_id, exec_stream) 
 
-    def start_keosd(self):
-        exec_id, exec_stream = self.open_process(['keosd'])
+    def start_keosd(self, *args, **kwargs):
+        exec_id, exec_stream = self.open_process(
+            ['keosd', *args], **kwargs)
         self.__keosd_exec_id = exec_id
         self.__keosd_exec_stream = exec_stream
 
@@ -178,12 +186,14 @@ class CLEOS:
         self,
         config_dir: str,
         state_plugin: bool = False,
-        genesis: Optional[str] = None
+        genesis: Optional[str] = None,
+        data_dir: str = '/mnt/dev/data'
     ):
         cmd = [
             'nodeos',
             '-e',
             '-p', 'eosio',
+            f'--data-dir={data_dir}',
             f'--config-dir={config_dir}' 
         ]
         if state_plugin:
@@ -198,9 +208,25 @@ class CLEOS:
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
 
+    def gather_nodeos_output(self) -> str:
+        return self.wait_process(
+            self.__nodeos_exec_id,
+            self.__nodeos_exec_stream
+        )
+
+    def gather_keosd_output(self) -> str:
+        return self.wait_process(
+            self.__keosd_exec_id,
+            self.__keosd_exec_stream
+        )
+
     def is_nodeos_running(self) -> bool:
         return self.client.api.exec_inspect(
             self.__nodeos_exec_id)['Running']
+
+    def is_keosd_running(self) -> bool:
+        return self.client.api.exec_inspect(
+            self.__keosd_exec_id)['Running']
 
     def wait_produced(self):
         exec_id = self.__nodeos_exec_id
@@ -268,8 +294,12 @@ class CLEOS:
             ['find', build_dir, '-type', 'f', '-name', '*.wasm'],
             retry=0
         )
-        self.logger.info(f'wasm candidates:\n{out}')
         wasms = out.rstrip().split('\n')
+
+        wasms.sort()  # alphabetical
+        wasms.sort(key=len)  # length
+
+        self.logger.info(f'wasm candidates:\n{json.dumps(wasms, indent=4)}')
 
         # Fuzzy match all .wasm files, select one most similar to {contract.name} 
         matches = sorted(
@@ -292,7 +322,9 @@ class CLEOS:
         self.logger.info(f'abi: {abi_file}')
         
         cmd = [
-            'cleos', '--url', self.url, 'set', 'contract', account_name,
+            'cleos',
+            '--url', self.url,
+            'set', 'contract', account_name,
             str(wasm_path.parent),
             wasm_file,
             abi_file,
@@ -398,7 +430,14 @@ class CLEOS:
 
         ec, _ = self.push_action(
             'eosio', 'init',
-            ['0', '4,TLOS'],
+            ['0', sys_token],
+            'eosio@active'
+        )
+        assert ec == 0
+
+        ec, _ = self.push_action(
+            'eosio', 'setram',
+            [ram_supply.amount],
             'eosio@active'
         )
         assert ec == 0
@@ -516,6 +555,10 @@ class CLEOS:
         self.import_key(dev_key)
         self.logger.info('imported dev key')
 
+    def list_keys(self):
+        return self.run(
+            ['cleos', 'wallet', 'list'])
+
     def get_feature_digest(self, feature_name: str) -> str:
         """Given a feature name, query the v1 API endpoint: 
         
@@ -573,6 +616,15 @@ class CLEOS:
         )
         assert ec == 0
         self.logger.info(f'{digest} active.')
+
+    def get_ram_price(self) -> Asset:
+        row = self.get_table(
+            'eosio', 'eosio', 'rammarket')[0]
+
+        quote = asset_from_str(row['quote']['balance']).amount
+        base = asset_from_str(row['base']['balance']).amount
+
+        return Asset((quote / base) * 1024 / 0.995, Symbol('TLOS', 4)) 
 
     def push_action(
         self,
@@ -672,7 +724,7 @@ class CLEOS:
     ) -> ExecutionResult:
         """Create an unstaked eosio account, usualy used by system contracts.
 
-        :param owner: The system account that authorizes the creation of a new account.
+        :param owner: The system accunt that authorizes the creation of a new account.
         :param name: The name of the new account conforming to account naming conventions.
         :param key: The owner public key or permission level for the new account (optional).
 
@@ -691,9 +743,9 @@ class CLEOS:
         self,
         owner: str,
         name: str,
-        net: str = '1000.0000 TLOS',
-        cpu: str = '1000.0000 TLOS',
-        ram: int = 8192,
+        net: str = '10.0000 TLOS',
+        cpu: str = '10.0000 TLOS',
+        ram: int = 81920,
         key: Optional[str] = None
     ) -> ExecutionResult:
         """Create a staked eosio account.
@@ -720,10 +772,10 @@ class CLEOS:
             'newaccount',
             owner,
             '--transfer',
-            name, key,
+            name, key, key,
             '--stake-net', net,
             '--stake-cpu', cpu,
-            '--buy-ram-kbytes', ram
+            '--buy-ram-bytes', ram
         ])
         assert ec == 0
         self.logger.info(f'created staked account: {name}')
@@ -734,8 +786,8 @@ class CLEOS:
         owner: str,
         names: List[str],
         keys: List[str],
-        net: str = '1000.0000 TLOS',
-        cpu: str = '1000.0000 TLOS',
+        net: str = '10.0000 TLOS',
+        cpu: str = '10.0000 TLOS',
         ram: int = 8192
     ) -> List[ExecutionResult]:
         """Same as :func:`~pytest_eosio.EOSIOTestSession.create_account_staked`,
@@ -767,7 +819,7 @@ class CLEOS:
                 name, key,
                 '--stake-net', net,
                 '--stake-cpu', cpu,
-                '--buy-ram-kbytes', ram
+                '--buy-ram-bytes', ram
             ]) for name, key in zip(names, keys)
         ]
         results = [
@@ -1222,17 +1274,15 @@ class CLEOS:
         )
 
     def init_sys_token(self):
-        """Initialize ``TLOS`` token, with a supply of 
-        10000000000 units and four digits of precision.
+        """Initialize ``SYS`` token.
 
         Issue all of it to ``eosio`` account.
         """
 
         if not self._sys_token_init:
             self._sys_token_init = True
-            max_supply = f'{10000000000:.4f} TLOS'
-            ec, _ = self.create_token('eosio', max_supply)
+            ec, _ = self.create_token('eosio', sys_token_supply)
             assert ec == 0
-            ec, _ = self.issue_token('eosio', max_supply, __name__)
+            ec, _ = self.issue_token('eosio', sys_token_init_issue, __name__)
             assert ec == 0
 
