@@ -184,17 +184,19 @@ class CLEOS:
 
     def start_nodeos_from_config(
         self,
-        config_dir: str,
+        config: str,
         state_plugin: bool = False,
         genesis: Optional[str] = None,
-        data_dir: str = '/mnt/dev/data'
+        data_dir: str = '/mnt/dev/data',
+        snapshot: Optional[str] = None,
+        logfile: str = '/root/nodeos.log'
     ):
         cmd = [
             'nodeos',
             '-e',
             '-p', 'eosio',
             f'--data-dir={data_dir}',
-            f'--config-dir={config_dir}' 
+            f'--config={config}' 
         ]
         if state_plugin:
             # https://github.com/EOSIO/eos/issues/6334
@@ -203,8 +205,14 @@ class CLEOS:
         if genesis:
             cmd += [f'--genesis-json={genesis}']
 
-        self.logger.info(f'starting nodeos with cmd: {cmd}')
-        exec_id, exec_stream = self.open_process(cmd)
+        if snapshot:
+            cmd += [f'--snapshot={snapshot}']
+
+        final_cmd = ' '.join(cmd) + f' > {logfile} 2>&1'
+        final_cmd = ['/bin/bash', '-c', final_cmd]
+
+        self.logger.info(f'starting nodeos with cmd: {final_cmd}')
+        exec_id, exec_stream = self.open_process(final_cmd)
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
 
@@ -228,14 +236,36 @@ class CLEOS:
         return self.client.api.exec_inspect(
             self.__keosd_exec_id)['Running']
 
-    def wait_produced(self):
-        exec_id = self.__nodeos_exec_id
-        exec_stream = self.__nodeos_exec_stream
+    def wait_produced(self, from_file: Optional[str] = None):
+        if from_file:
+            exec_id, exec_stream = docker_open_process(
+                    self.client, self.vtestnet,
+                    ['/bin/bash', '-c',
+                    f'tail -f {from_file}'])
+        else:
+            exec_id = self.__nodeos_exec_id
+            exec_stream = self.__nodeos_exec_stream
         
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
             self.logger.info(msg.rstrip())
             if 'Produced' in msg:
+                break
+
+    def wait_received(self, from_file: Optional[str] = None):
+        if from_file:
+            exec_id, exec_stream = docker_open_process(
+                    self.client, self.vtestnet,
+                    ['/bin/bash', '-c',
+                    f'tail -f {from_file}'])
+        else:
+            exec_id = self.__nodeos_exec_id
+            exec_stream = self.__nodeos_exec_stream
+        
+        for chunk in exec_stream:
+            msg = chunk.decode('utf-8')
+            self.logger.info(msg.rstrip())
+            if 'Received' in msg:
                 break
 
     def deploy_contract(
