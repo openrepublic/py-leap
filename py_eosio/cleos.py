@@ -929,7 +929,7 @@ class CLEOS:
 
         return self.get_table('eosio', account, 'userres')
 
-    def new_account(self, name: Optional[str] = None) -> str:
+    def new_account(self, name: Optional[str] = None, **kwargs) -> str:
         """Create a new account with a random key and name, import the private
         key into the wallet.
 
@@ -944,9 +944,12 @@ class CLEOS:
         else:
             account_name = random_eosio_name()
 
-        private_key, public_key = self.create_key_pair()
-        self.import_key(private_key)
-        self.create_account_staked('eosio', account_name, key=public_key)
+        if 'key' not in kwargs:
+            private_key, public_key = self.create_key_pair()
+            self.import_key(private_key)
+            kwargs['key'] = public_key
+
+        self.create_account_staked('eosio', account_name, **kwargs)
         return account_name
 
     def new_accounts(self, n: int) -> List[str]:
