@@ -189,6 +189,7 @@ class CLEOS:
         genesis: Optional[str] = None,
         data_dir: str = '/mnt/dev/data',
         snapshot: Optional[str] = None,
+        logging_cfg: Optional[str] = None,
         logfile: str = '/root/nodeos.log'
     ):
         cmd = [
@@ -207,6 +208,9 @@ class CLEOS:
 
         if snapshot:
             cmd += [f'--snapshot={snapshot}']
+
+        if logging_cfg:
+            cmd += [f'--logconf={logging_cfg}']
 
         final_cmd = ' '.join(cmd) + f' > {logfile} 2>&1'
         final_cmd = ['/bin/bash', '-c', final_cmd]
