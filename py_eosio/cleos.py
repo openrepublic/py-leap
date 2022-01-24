@@ -61,13 +61,8 @@ class CLEOS:
             self.logger = logging.getLogger('cleos')
         else:
             self.logger = logger
-
-        ports = wait_for_attr(
-            self.vtestnet,
-            ('NetworkSettings', 'Ports', '8888/tcp'))
-
-        container_port = ports[0]['HostPort']
-        self.endpoint = f'http://localhost:{container_port}'
+        
+        self.endpoint = url
 
         self._sys_token_init = False
     
@@ -607,7 +602,10 @@ class CLEOS:
             f'{self.endpoint}/v1/producer/get_supported_protocol_features',
             json={}
         )
-        for item in r.json():
+        resp = r.json()
+        assert isinstance(resp, list) 
+
+        for item in resp:
             if item['specification'][0]['value'] == feature_name:
                 digest = item['feature_digest']
                 break
