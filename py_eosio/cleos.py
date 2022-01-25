@@ -242,8 +242,7 @@ class CLEOS:
                     ['/bin/bash', '-c',
                     f'tail -f {from_file}'])
         else:
-            exec_id = self.__nodeos_exec_id
-            exec_stream = self.__nodeos_exec_stream
+            exec_stream = self.vtestnet.logs(stream=True)
         
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
@@ -258,14 +257,15 @@ class CLEOS:
                     ['/bin/bash', '-c',
                     f'tail -f {from_file}'])
         else:
-            exec_id = self.__nodeos_exec_id
-            exec_stream = self.__nodeos_exec_stream
+            exec_stream = self.vtestnet.logs(stream=True)
         
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
             self.logger.info(msg.rstrip())
             if 'Received' in msg:
                 break
+
+
 
     def deploy_contract(
         self,
