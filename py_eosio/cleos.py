@@ -147,6 +147,11 @@ class CLEOS:
         self.__keosd_exec_id = exec_id
         self.__keosd_exec_stream = exec_stream
 
+        for msg in exec_stream:
+            msg = msg.decode('utf-8')
+            if 'add api url: /v1/node/get_supported_apis' in msg:
+                break
+
     def start_nodeos(
         self,
         plugins: List[str] = [
@@ -515,6 +520,7 @@ class CLEOS:
         ec, out = self.run(
             ['cleos', '--url', self.url, 'wallet', 'import', '--private-key', private_key]
         )
+        self.logger.info(out)
         assert ec == 0
         self.logger.info('key imported')
 
@@ -573,8 +579,9 @@ class CLEOS:
         # Step 4:  Import keys into your wallet
         self.logger.info('import key...')
         ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'create_key'])
-        public_key = out.split('\"')[1]
+        self.logger.info(out)
         assert ec == 0
+        public_key = out.split('\"')[1]
         assert len(public_key) == 53
         self.dev_wallet_pkey = public_key
         self.logger.info(f'imported {public_key}')
