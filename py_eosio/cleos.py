@@ -249,11 +249,15 @@ class CLEOS:
         else:
             exec_stream = self.vtestnet.logs(stream=True)
         
+        out = ''
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
+            out += msg
             self.logger.info(msg.rstrip())
             if 'Produced' in msg:
                 break
+
+        return out
 
     def wait_received(self, from_file: Optional[str] = None):
         if from_file:
@@ -264,13 +268,15 @@ class CLEOS:
         else:
             exec_stream = self.vtestnet.logs(stream=True)
         
+        out = ''
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
+            out += msg
             self.logger.info(msg.rstrip())
             if 'Received' in msg:
                 break
 
-
+        return out
 
     def deploy_contract(
         self,
