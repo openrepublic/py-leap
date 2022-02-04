@@ -349,7 +349,7 @@ def wait_for_attr(
                 val = val[key]
 
             except KeyError as ke:
-                return ke
+                raise KeyError(f'{key} not found in {val}')
 
         return val
 
