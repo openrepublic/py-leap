@@ -31,6 +31,10 @@ RUN wget https://github.com/EOSIO/eos/releases/download/v2.0.13/eosio_2.0.13-1-u
 
 RUN apt-get install -y ./eosio_2.0.13-1-ubuntu-18.04_amd64.deb
 
+RUN mkdir -p /root/nodeos
+WORKDIR /root/nodeos
+COPY config.ini config.ini
+
 EXPOSE 8888
 
 CMD sleep 9999999999
