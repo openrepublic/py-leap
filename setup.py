@@ -1,19 +1,17 @@
 #!/usr/bin/python3
 
-from pathlib import Path
 from setuptools import setup
 
 
-libs = [
-    str(file) for file in Path('py_eosio').glob('**/*')
-]
-
-
 setup(
-    name='py_eosio',
-    packages=[''],
-    package_dir={'': '.'},
-    package_data={'': libs},
+	name='py-eosio',
+	version='0.1a3',
+	author='Guillermo Rodriguez',
+	author_email='guillermor@fing.edu.uy',
+	packages=['py_eosio'],
+	install_requires=[
+        'docker',
+		'pytest',
+        'requests'
+	]
 )
-
-
