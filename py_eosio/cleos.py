@@ -190,7 +190,7 @@ class CLEOS:
         data_dir: str = '/mnt/dev/data',
         snapshot: Optional[str] = None,
         logging_cfg: Optional[str] = None,
-        logfile: str = '/root/nodeos.log'
+        logfile: Optional[str] = '/root/nodeos.log'
     ):
         cmd = [
             'nodeos',
@@ -212,8 +212,10 @@ class CLEOS:
         if logging_cfg:
             cmd += [f'--logconf={logging_cfg}']
 
-        final_cmd = ' '.join(cmd) + f' > {logfile} 2>&1'
-        final_cmd = ['/bin/bash', '-c', final_cmd]
+        if logfile:
+            cmd += [f'> {logfile} 2>&1'] 
+
+        final_cmd = ['/bin/bash', '-c', ' '.join(cmd)]
 
         self.logger.info(f'starting nodeos with cmd: {final_cmd}')
         exec_id, exec_stream = self.open_process(final_cmd)
@@ -382,8 +384,25 @@ class CLEOS:
             raise AssertionError(f'Couldn\'t deploy {account_name} contract.')
 
 
+    def clone_node_activations(self, target_url: str):
+        r = requests.post(
+            f'{target_url}/v1/chain/get_activated_protocol_features',
+            json={}
+        )
+        resp = r.json()
+        assert 'activated_protocol_features' in resp
+        features = resp['activated_protocol_features']
+
+        # sort in order of activation
+        features = sorted(features, key=lambda f: f['activation_ordinal'])
+        features.pop(0)  # remove PREACTIVATE_FEATURE
+ 
+        for f in features:
+            self.activate_feature_with_digest(f['feature_digest'])
+
     def boot_sequence(
         self,
+        activations_node: str = 'https://mainnet.telos.net',
         sys_contracts_mount='/usr/opt/telos.contracts/contracts'
     ):
         """Perform enterprise operating system bios sequence acording to:
@@ -458,8 +477,7 @@ class CLEOS:
             create_account=False
         )
 
-        self.activate_feature('ONLY_BILL_FIRST_AUTHORIZER')
-        self.activate_feature('RAM_RESTRICTIONS')
+        self.clone_node_activations(activations_node)
 
         ec, _ = self.push_action(
             'eosio', 'setpriv',
@@ -648,12 +666,11 @@ class CLEOS:
 
         self.logger.info(f'{digest} active.')
 
-    def activate_feature(self, feature_name: str):
-        """Given a v2 feature name, activate it.
+    def activate_feature_with_digest(self, digest: str):
+        """Given a v2 feature digest, activate it.
         """
 
-        self.logger.info(f'activating {feature_name}...')
-        digest = self.get_feature_digest(feature_name)
+        self.logger.info(f'activating {digest}...')
         ec, _ = self.push_action(
             'eosio', 'activate',
             [digest],
@@ -661,6 +678,14 @@ class CLEOS:
         )
         assert ec == 0
         self.logger.info(f'{digest} active.')
+
+    def activate_feature(self, feature_name: str):
+        """Given a v2 feature name, activate it.
+        """
+
+        self.logger.info(f'activating {feature_name}...')
+        digest = self.get_feature_digest(feature_name)
+        self.activate_feature_with_digest(digest)
 
     def get_ram_price(self) -> Asset:
         row = self.get_table(
@@ -1029,6 +1054,7 @@ class CLEOS:
     
         start = self.get_info()['head_block_num']
         while (info := self.get_info())['head_block_num'] - start < n:
+            self.logger.info(f'block num: {info["head_block_num"]}')
             time.sleep(sleep_time)
 
     """Multi signature

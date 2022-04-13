@@ -16,17 +16,22 @@ def cleos_full_boot():
     dclient = docker.from_env()
     vtestnet = get_container(
         dclient,
-        DEFAULT_NODEOS_REPO,
-        DEFAULT_NODEOS_IMAGE,
+        f'{DEFAULT_NODEOS_REPO}:{DEFAULT_NODEOS_IMAGE}',
+        force_unique=True,
         detach=True,
-        publish_all_ports=True)
+        network='host')
 
     try:
         cleos = CLEOS(dclient, vtestnet)
         cleos.start_keosd()
-        cleos.start_nodeos()
+
+        cleos.start_nodeos_from_config(
+            '/root/nodeos/config.ini',
+            data_dir='/root/nodeos/data',
+            state_plugin=True)
+
         cleos.wait_blocks(1)
-        cleos.setup_wallet()
+        cleos.setup_wallet('5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3')
         cleos.boot_sequence()
 
         yield cleos
