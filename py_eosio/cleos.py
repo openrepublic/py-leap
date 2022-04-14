@@ -35,6 +35,7 @@ from .sugar import (
     docker_open_process,
     docker_wait_process
 )
+from .errors import ContractDeployError
 from .tokens import sys_token, ram_token
 from .typing import (
     ExecutionResult, 
@@ -50,6 +51,7 @@ class CLEOS:
         docker_client: DockerClient, 
         vtestnet: Container,
         url: str = 'http://127.0.0.1:8888',
+        remote: str = 'https://mainnet.telos.net',
         logger = None
     ):
 
@@ -63,6 +65,7 @@ class CLEOS:
             self.logger = logger
         
         self.endpoint = url
+        self.remote_endpoint = remote
 
         self._sys_token_init = False
     
@@ -88,10 +91,13 @@ class CLEOS:
         :rtype: :ref:`typing_exe_result`
         """
 
+        # stringify command
+        cmd = [str(chunk) for chunk in cmd]
+
         self.logger.info(f'exec run: {cmd}')
         for i in range(1, 2 + retry):
-            ec, out = self.vtestnet.exec_run(
-                [str(chunk) for chunk in cmd], *args, **kwargs)
+            ec, out = self.vtestnet.exec_run(cmd, *args, **kwargs)
+
             if ec == 0:
                 break
 
@@ -287,7 +293,8 @@ class CLEOS:
         privileged: bool = False,
         account_name: Optional[str] = None,
         create_account: bool = True,
-        staked: bool = True
+        staked: bool = True,
+        verify_hash: bool = True
     ):
         """Deploy a built contract.
 
@@ -351,12 +358,41 @@ class CLEOS:
             reverse=True
         )
         if len(matches) == 0: 
-            raise FileNotFoundError(
+            raise ContractDeployError(
                 f'Couldn\'t find {contract_name}.wasm')
 
         wasm_path = matches[0]
         wasm_file = str(wasm_path).split('/')[-1]
         abi_file = wasm_file.replace('.wasm', '.abi')
+
+        # verify contract hash using remote node
+        if verify_hash:
+            self.logger.info('verifing wasm hash...')
+            ec, out = self.run(
+                ['sha256sum', wasm_path],
+                retry=0
+            )
+            assert ec == 0
+            
+            local_shasum = out.split(' ')[0]
+            self.logger.info(f'local sum: {local_shasum}')
+    
+            self.logger.info(f'asking remote {self.remote_endpoint}...')
+            resp = requests.post(
+                f'{self.remote_endpoint}/v1/chain/get_code',
+                json={
+                    'account_name': account_name,
+                    'code_as_wasm': 1
+                }).json()
+
+            remote_shasum = resp['code_hash']
+            self.logger.info(f'remote sum: {remote_shasum}')
+
+            if local_shasum != remote_shasum:
+                raise ContractDeployError(
+                    f'Local contract hash doesn\'t match remote:\n'
+                    f'local: {local_shasum}\n'
+                    f'remote: {remote_shasum}')
 
         self.logger.info('deploy...')
         self.logger.info(f'wasm path: {wasm_path}')
@@ -381,7 +417,7 @@ class CLEOS:
             self.logger.info('deployed')
 
         else:
-            raise AssertionError(f'Couldn\'t deploy {account_name} contract.')
+            raise ContractDeployError(f'Couldn\'t deploy {account_name} contract.')
 
 
     def clone_node_activations(self, target_url: str):
@@ -402,8 +438,8 @@ class CLEOS:
 
     def boot_sequence(
         self,
-        activations_node: str = 'https://mainnet.telos.net',
-        sys_contracts_mount='/usr/opt/telos.contracts/contracts'
+        activations_node: Optional[str] = None,
+        sys_contracts_mount='/root/nodeos/contracts'
     ):
         """Perform enterprise operating system bios sequence acording to:
 
@@ -476,6 +512,9 @@ class CLEOS:
             account_name='eosio',
             create_account=False
         )
+
+        if not activations_node:
+            activations_node = self.remote_endpoint
 
         self.clone_node_activations(activations_node)
 
