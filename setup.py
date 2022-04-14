@@ -12,6 +12,7 @@ setup(
 	install_requires=[
         'docker',
 		'pytest',
+        'natsort',
         'requests'
 	]
 )
