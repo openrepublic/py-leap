@@ -8,6 +8,8 @@ import json
 import string
 import random
 import logging
+import tarfile
+import tempfile
 
 from typing import Dict, Optional
 from decimal import Decimal
@@ -18,6 +20,7 @@ from binascii import hexlify
 
 from natsort import natsorted
 from docker.errors import NotFound
+from docker.models.containers import Container
 
 from .typing import ExecutionStream, ExecutionResult
 
@@ -463,9 +466,36 @@ def docker_wait_process(
     out = ''
     for chunk in exec_stream:
         msg = chunk.decode('utf-8')
-        logger.info(msg.rstrip())
         out += msg
 
     info = client.api.exec_inspect(exec_id)
 
-    return info['ExitCode'], out
+    ec = info['ExitCode']
+    if ec != 0:
+        logger.warning(msg.rstrip())
+
+    return ec, out
+
+
+def docker_move_into(
+    client,
+    container: Union[str, Container],
+    src: Union[str, Path],
+    dst: Union[str, Path]
+):
+    tmp_name = random_string(size=32)
+    archive_loc = Path(tmp_name + '.tar.gz').resolve()
+
+    with tarfile.open(archive_loc, mode='w:gz') as archive:
+        archive.add(src, recursive=True)
+
+    with open(archive_loc, 'rb') as archive:
+        binary_data = archive.read()
+
+    archive_loc.unlink()
+
+    if isinstance(container, Container):
+        container = container.id
+
+    client.api.put_archive(container, dst, binary_data)
+

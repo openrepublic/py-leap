@@ -33,7 +33,8 @@ from .sugar import (
     Asset,
     Symbol,
     docker_open_process,
-    docker_wait_process
+    docker_wait_process,
+    docker_move_into
 )
 from .errors import ContractDeployError
 from .tokens import sys_token, ram_token
@@ -102,12 +103,14 @@ class CLEOS:
                 break
 
             self.logger.warning(f'cmd run retry num {i}...')
-               
+              
+        out = out.decode('utf-8')
+
         if ec != 0:
             self.logger.error('command exited with non zero status:')
-            self.logger.error(out.decode('utf-8'))
+            self.logger.error(out)
 
-        return ec, out.decode('utf-8')
+        return ec, out
 
     def open_process(
         self,
@@ -128,6 +131,8 @@ class CLEOS:
             be consumed.
         :rtype: :ref:`typing_exe_stream`
         """
+        # stringify command
+        cmd = [str(chunk) for chunk in cmd]
         return docker_open_process(self.client, self.vtestnet, cmd, **kwargs)
 
     def wait_process(
@@ -296,7 +301,7 @@ class CLEOS:
         staked: bool = True,
         verify_hash: bool = True
     ):
-        """Deploy a built contract.
+        """Deploy a built contract inside the container.
 
         :param contract_name: Name of contract wasm file. 
         :param build_dir: Path to the directory the wasm and abi files are
@@ -308,6 +313,8 @@ class CLEOS:
         :param account_name: Name of the target account of the deployment.
         :param create_account: ``True`` if target account should be created.
         :param staked: ``True`` if this account should use RAM & NET resources.
+        :param verify_hash: Query remote node for ``contract_name`` and compare
+            hashes.
         """
         self.logger.info(f'contract {contract_name}:')
         
@@ -385,14 +392,20 @@ class CLEOS:
                     'code_as_wasm': 1
                 }).json()
 
-            remote_shasum = resp['code_hash']
-            self.logger.info(f'remote sum: {remote_shasum}')
+            if 'code_hash' not in resp:
+                self.logger.warning('couldn\'t perform hash check remote response:')
+                self.logger.warning(json.dumps(resp, indent=4))
 
-            if local_shasum != remote_shasum:
-                raise ContractDeployError(
-                    f'Local contract hash doesn\'t match remote:\n'
-                    f'local: {local_shasum}\n'
-                    f'remote: {remote_shasum}')
+            else:
+
+                remote_shasum = resp['code_hash']
+                self.logger.info(f'remote sum: {remote_shasum}')
+
+                if local_shasum != remote_shasum:
+                    raise ContractDeployError(
+                        f'Local contract hash doesn\'t match remote:\n'
+                        f'local: {local_shasum}\n'
+                        f'remote: {remote_shasum}')
 
         self.logger.info('deploy...')
         self.logger.info(f'wasm path: {wasm_path}')
@@ -419,20 +432,87 @@ class CLEOS:
         else:
             raise ContractDeployError(f'Couldn\'t deploy {account_name} contract.')
 
+    def deploy_contract_from_host(
+        self,
+        contract_name: str,
+        build_dir: str,
+        privileged: bool = False,
+        account_name: Optional[str] = None,
+        create_account: bool = True,
+        staked: bool = True,
+        verify_hash: bool = True
+    ):
+        """Deploy a built contract from outside container.
+
+        :param contract_name: Name of contract wasm file. 
+        :param build_dir: Path to the directory the wasm and abi files are
+            located. Fuzzy searches all subdirectories for the .wasm and then
+            picks the one most similar to ``contract_name``, asumes .abi has
+            the same name and is in same directory.
+        :param privileged: ``True`` if contract should be privileged (system
+            contracts).
+        :param account_name: Name of the target account of the deployment.
+        :param create_account: ``True`` if target account should be created.
+        :param staked: ``True`` if this account should use RAM & NET resources.
+        :param verify_hash: Query remote node for ``contract_name`` and compare
+            hashes.
+        """
+        ec, out = self.run(
+            ['mkdir', '-p', '/tmp/host_contracts'])
+        assert ec == 0
+
+        dir_name = Path(build_dir).name
+
+        docker_move_into(
+            self.client,
+            self.vtestnet,
+            build_dir,
+            f'/tmp/host_contracts')
+
+        self.deploy_contract(
+            contract_name,
+            f'/tmp/host_contracts/{build_dir}',
+            privileged=privileged,
+            account_name=account_name,
+            create_account=create_account,
+            staked=staked,
+            verify_hash=verify_hash
+        )
 
     def clone_node_activations(self, target_url: str):
-        r = requests.post(
-            f'{target_url}/v1/chain/get_activated_protocol_features',
-            json={}
-        )
-        resp = r.json()
-        assert 'activated_protocol_features' in resp
-        features = resp['activated_protocol_features']
+        lower_bound = 0
+        step = 250
+        more = True
+        features = []
+        while more:
+            r = requests.post(
+                f'{target_url}/v1/chain/get_activated_protocol_features',
+                json={
+                    'limit': step,
+                    'lower_bound': lower_bound,
+                    'upper_bound': lower_bound + step
+                }
+            )
+            resp = r.json()
+    
+            assert 'activated_protocol_features' in resp
+            features += resp['activated_protocol_features']
+            lower_bound += step
+            more = 'more' in resp
 
         # sort in order of activation
         features = sorted(features, key=lambda f: f['activation_ordinal'])
         features.pop(0)  # remove PREACTIVATE_FEATURE
- 
+
+        feature_names = [
+            feat['specification'][0]['value']
+            for feat in features
+        ]
+
+        self.logger.info('activating features:')
+        self.logger.info(
+            json.dumps(feature_names, indent=4))
+
         for f in features:
             self.activate_feature_with_digest(f['feature_digest'])
 
@@ -774,11 +854,9 @@ class CLEOS:
         ec, out = self.run(cmd, retry=retry)
         try:
             out = json.loads(out)
-            self.logger.info(collect_stdout(out))
             
         except (json.JSONDecodeError, TypeError):
-            self.logger.error(f'\n{out}')
-            self.logger.error(f'cmd line: {cmd}')
+            ...
 
         return ec, out
 
@@ -854,7 +932,7 @@ class CLEOS:
         name: str,
         net: str = '10.0000 TLOS',
         cpu: str = '10.0000 TLOS',
-        ram: int = 81920,
+        ram: int = 181920,
         key: Optional[str] = None
     ) -> ExecutionResult:
         """Create a staked eosio account.
@@ -897,7 +975,7 @@ class CLEOS:
         keys: List[str],
         net: str = '10.0000 TLOS',
         cpu: str = '10.0000 TLOS',
-        ram: int = 8192
+        ram: int = 181920
     ) -> List[ExecutionResult]:
         """Same as :func:`~pytest_eosio.EOSIOTestSession.create_account_staked`,
         but takes lists of names and keys, to create the accounts in parallel,
@@ -1283,14 +1361,19 @@ class CLEOS:
         )
         if len(balances) == 1:
             return balances[0]['balance']
+
+        elif len(balances) > 1:
+            return balances
+
         else:
-            return None
+            return None 
 
     def create_token(
         self,
         issuer: str,
         max_supply: Union[str, Asset],
-        token_contract: str = 'eosio.token'
+        token_contract: str = 'eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Create a new token issued by ``issuer``.
 
@@ -1306,7 +1389,8 @@ class CLEOS:
             token_contract,
             'create',
             [issuer, str(max_supply)],
-            'eosio.token'
+            'eosio.token',
+            **kwargs
         )
 
     def issue_token(
@@ -1314,7 +1398,8 @@ class CLEOS:
         issuer: str,
         quantity: Union[str, Asset],
         memo: str,
-        token_contract: str = 'eosio.token'
+        token_contract: str = 'eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Issue a specific quantity of tokens.
 
@@ -1331,7 +1416,8 @@ class CLEOS:
             token_contract,
             'issue',
             [issuer, str(quantity), memo],
-            f'{issuer}@active'
+            f'{issuer}@active',
+            **kwargs
         )
 
     def transfer_token(
@@ -1340,7 +1426,8 @@ class CLEOS:
         _to: str,
         quantity: Union[str, Asset],
         memo: str = '',
-        token_contract: str = 'eosio.token'
+        token_contract: str = 'eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Transfer tokens.
 
@@ -1358,7 +1445,8 @@ class CLEOS:
             token_contract,
             'transfer',
             [_from, _to, str(quantity), memo],
-            f'{_from}@active'
+            f'{_from}@active',
+            **kwargs
         )
 
     def give_token(
@@ -1366,7 +1454,8 @@ class CLEOS:
         _to: str,
         quantity: Union[str, Asset],
         memo: str = '',
-        token_contract='eosio.token'
+        token_contract='eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Transfer tokens from token contract to an account.
 
@@ -1383,8 +1472,90 @@ class CLEOS:
             _to,
             str(quantity),
             memo,
-            token_contract=token_contract
+            token_contract=token_contract,
+            **kwargs
         )
+
+    def retire_token(
+        self,
+        issuer: str,
+        quantity: Union[str, Asset],
+        memo: str = '',
+        token_contract: str = 'eosio.token',
+        **kwargs
+    ) -> ActionResult:
+        """Retire tokens.
+
+        :param issuer: Account that retires the tokens.
+        :param quantity: Quantity of tokens to retire in asset form.
+        :param memo: Memo string to attach to transaction.
+        :param token_contract: Token contract.
+
+        :return: ``token_contract.retire`` execution result.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        return self.push_action(
+            token_contract,
+            'retire',
+            [str(quantity), memo],
+            f'{issuer}@active',
+            **kwargs
+        )
+
+    def open_token(
+        self,
+        owner: str,
+        sym: Union[str, Symbol],
+        ram_payer: str,
+        token_contract: str = 'eosio.token',
+        **kwargs
+    ) -> ActionResult:
+        """Allows `ram_payer` to create an account `owner` with zero balance for
+        token `sym` at the expense of `ram_payer`.
+
+        :param owner: the account to be created,
+        :param sym: the token to be payed with by `ram_payer`,
+        :param ram_payer: the account that supports the cost of this action.
+        :param token_contract: Token contract.
+
+        :return: ``token_contract.open`` execution result.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        return self.push_action(
+            token_contract,
+            'open',
+            [owner, sym, ram_payer],
+            f'{ram_payer}@active',
+            **kwargs
+        )
+
+    def close_token(
+        self,
+        owner: str,
+        sym: Union[str, Symbol],
+        token_contract: str = 'eosio.token',
+        **kwargs
+    ) -> ActionResult:
+        """This action is the opposite for open, it closes the account `owner`
+        for token `sym`.
+        
+        :param owner: the owner account to execute the close action for,
+        :param symbol: the symbol of the token to execute the close action for.
+
+        :return: ``token_contract.close`` execution result.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        return self.push_action(
+            token_contract,
+            'close',
+            [owner, sym],
+            f'{owner}@active',
+            **kwargs
+        )
+
 
     def init_sys_token(self):
         """Initialize ``SYS`` token.
@@ -1399,3 +1570,46 @@ class CLEOS:
             ec, _ = self.issue_token('eosio', sys_token_init_issue, __name__)
             assert ec == 0
 
+    def rex_deposit(self, owner: str, quantity: str):
+        return self.push_action(
+            'eosio',
+            'deposit',
+            [owner, quantity],
+            f'{owner}@active'
+        )
+
+    def rex_buy(self, _from: str, quantity: str):
+        return self.push_action(
+            'eosio',
+            'buyrex',
+            [_from, quantity],
+            f'{_from}@active'
+        )
+
+    def vote_producers(
+        self, 
+        voter: str,
+        proxy: str,
+        producers: List[str]
+    ):
+        return self.push_action(
+            'eosio',
+            'voteproducer',
+            [voter, proxy, producers],
+            f'{voter}@active'
+        )
+
+    def get_schedule(self):
+        ec, out = self.run(['cleos', 'get', 'schedule'])
+        
+        if ec == 0:
+            return out
+        else:
+            return None
+
+    def get_producers(self):
+        return self.get_table(
+            'eosio',
+            'eosio',
+            'producers'
+        )
