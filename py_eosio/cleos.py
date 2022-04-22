@@ -68,6 +68,8 @@ class CLEOS:
         self.endpoint = url
         self.remote_endpoint = remote
 
+        self.keys = {}
+
         self._sys_token_init = False
     
     def run(
@@ -93,7 +95,12 @@ class CLEOS:
         """
 
         # stringify command
-        cmd = [str(chunk) for chunk in cmd]
+        cmd = [
+            json.dumps(chunk)
+            if isinstance(chunk, Dict) or isinstance(chunk, List)
+            else str(chunk)
+            for chunk in cmd
+        ]
 
         self.logger.info(f'exec run: {cmd}')
         for i in range(1, 2 + retry):
@@ -606,6 +613,13 @@ class CLEOS:
         assert ec == 0
 
         ec, _ = self.push_action(
+            'eosio', 'setpriv',
+            ['eosio.wrap', 1],
+            'eosio@active'
+        )
+        assert ec == 0
+
+        ec, _ = self.push_action(
             'eosio', 'init',
             ['0', sys_token],
             'eosio@active'
@@ -666,6 +680,7 @@ class CLEOS:
         self.logger.info(out)
         assert ec == 0
         self.logger.info('key imported')
+        return out.split(':')[1][1:].rstrip()
 
     def import_keys(self, private_keys: List[str]):
         """Import a list of private keys into wallet inside testnet container.
@@ -731,7 +746,7 @@ class CLEOS:
 
         # Step 5: Import the Development Key
         self.logger.info('import development key...')
-        self.import_key(dev_key)
+        self.keys['eosio'] = self.import_key(dev_key)
         self.logger.info('imported dev key')
 
     def list_keys(self):
@@ -815,13 +830,36 @@ class CLEOS:
 
         return Asset((quote / base) * 1024 / 0.995, Symbol('TLOS', 4)) 
 
+    def sign_transaction(
+        self,
+        key: str,
+        tx: Dict,
+        push: bool = False 
+    ):
+        chain_id = self.get_info()['chain_id']
+        if push:
+            push = ['--push-transaction']
+        else:
+            push = []
+        ec, out = self.run(
+            ['cleos', 'sign', '--public-key', key, '-c', chain_id, tx] + push)
+        try:
+            out = json.loads(out)
+            
+        except (json.JSONDecodeError, TypeError):
+            ...
+
+        return ec, out
+
+
     def push_action(
         self,
         contract: str,
         action: str,
         args: List[str],
         permissions: str,
-        retry: int = 3
+        retry: int = 3,
+        dump_tx: bool = False
     ) -> ActionResult:
         """Execute an action defined in a given contract, in case of failure retry.
 
@@ -850,6 +888,39 @@ class CLEOS:
         cmd = [
             'cleos', '--url', self.url, 'push', 'action', contract, action,
             json.dumps(args), '-p', permissions, '-j', '-f'
+        ]
+        if dump_tx:
+            cmd += ['-d', '-s']
+        ec, out = self.run(cmd, retry=retry)
+        try:
+            out = json.loads(out)
+            
+        except (json.JSONDecodeError, TypeError):
+            ...
+
+        return ec, out
+
+    def push_transaction(
+        self,
+        trx: Dict, 
+        retry: int = 3,
+        dump_tx: bool = False
+    ) -> ActionResult:
+        """Execute a transaction, in case of failure retry.
+
+        :param trx: JSON transaction.
+        :param retry: Max amount of retries allowed, can be zero for no retries.
+
+        :return: Always returns a tuple with the exit code at the beggining and
+            depending if the transaction was exectued, either the resulting json dict,
+            or the full output including errors as a string at the end.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        self.logger.info(f"push transaction: {json.dumps(trx, indent=4)}")
+        cmd = [
+            'cleos', '--url', self.url, 'push', 'transaction', 
+            json.dumps(trx), '-j', '-f'
         ]
         ec, out = self.run(cmd, retry=retry)
         try:
@@ -920,9 +991,13 @@ class CLEOS:
         """
 
         if not key:
-            key = self.dev_wallet_pkey
+            priv, pub = self.create_key_pair()
+            self.import_key(priv)
+            key = pub
+
         ec, out = self.run(['cleos', '--url', self.url, 'create', 'account', owner, name, key])
         assert ec == 0
+        self.keys[name] = key
         self.logger.info(f'created account: {name}')
         return ec, out
 
@@ -950,8 +1025,10 @@ class CLEOS:
         :return: Exitcode and output.
         :rtype: :ref:`typing_exe_result`
         """
-        if key is None:
-            key = self.dev_wallet_pkey
+        if not key:
+            priv, pub = self.create_key_pair()
+            self.import_key(priv)
+            key = pub
 
         ec, out = self.run([
             'cleos', '--url', self.url,
@@ -965,6 +1042,7 @@ class CLEOS:
             '--buy-ram-bytes', ram
         ])
         assert ec == 0
+        self.keys[name] = key
         self.logger.info(f'created staked account: {name}')
         return ec, out
 
@@ -1015,6 +1093,8 @@ class CLEOS:
         ]
         for ec, _ in results:
             assert ec == 0
+        for name, key in zip(names, keys):
+            self.keys[name] = key
         self.logger.info(f'created {len(names)} staked accounts.')
 
     def get_table(
@@ -1219,6 +1299,40 @@ class CLEOS:
             action_name,
             json.dumps(data),
             '-p', proposer
+        ]
+        ec, out = self.run(cmd)
+        assert ec == 0
+
+        return proposal_name
+
+    def multi_sig_propose_tx(
+        self,
+        proposer: str,
+        req_permissions: List[str],
+        tx: Dict 
+    ) -> str:
+        """Create a multi signature proposal with a random name.
+
+        :param proposer: Account to authorize the proposal.
+        :param req_permissions: List of permissions required to run proposed
+            transaction.
+        :param tx: Dictionary with transaction to execute with multi signature.
+
+        :return: New proposal name.
+        :rtype: str
+        """
+        proposal_name = random_eosio_name()
+        cmd = [
+            'cleos', '--url', self.url,
+            'multisig',
+            'propose_trx',
+            proposal_name,
+            json.dumps([
+                {'actor': perm[0], 'permission': perm[1]}
+                for perm in [p.split('@') for p in req_permissions]
+            ]),
+            tx,
+            '-p', f'{proposer}@active'
         ]
         ec, out = self.run(cmd)
         assert ec == 0
@@ -1468,7 +1582,7 @@ class CLEOS:
         :rtype: :ref:`typing_action_result`
         """
         return self.transfer_token(
-            token_contract,
+            'eosio',
             _to,
             str(quantity),
             memo,
@@ -1612,4 +1726,18 @@ class CLEOS:
             'eosio',
             'eosio',
             'producers'
+        )
+
+    def wrap_exec(
+        self,
+        executer: str,
+        tx: Dict,
+        **kwargs
+    ):
+        return self.push_action(
+            'eosio.wrap',
+            'exec',
+            [executer, tx],
+            f'{executer}@active',
+            **kwargs
         )
