@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
 	name='py-eosio',
-	version='0.1a5',
+	version='0.1a6',
 	author='Guillermo Rodriguez',
 	author_email='guillermor@fing.edu.uy',
 	packages=['py_eosio'],
