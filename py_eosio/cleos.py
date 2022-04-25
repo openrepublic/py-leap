@@ -486,7 +486,7 @@ class CLEOS:
             verify_hash=verify_hash
         )
 
-    def clone_node_activations(self, target_url: str):
+    def get_node_activations(self, target_url: str) -> List[Dict]:
         lower_bound = 0
         step = 250
         more = True
@@ -511,6 +511,11 @@ class CLEOS:
         features = sorted(features, key=lambda f: f['activation_ordinal'])
         features.pop(0)  # remove PREACTIVATE_FEATURE
 
+        return features
+
+    def clone_node_activations(self, target_url: str):
+        features = self.get_node_activations(target_url)
+
         feature_names = [
             feat['specification'][0]['value']
             for feat in features
@@ -522,6 +527,21 @@ class CLEOS:
 
         for f in features:
             self.activate_feature_with_digest(f['feature_digest'])
+
+    def diff_protocol_activations(self, target_one: str, target_two: str):
+        features_one = self.get_node_activations(target_one)
+        features_two = self.get_node_activations(target_two)
+
+        features_one_names = [
+            feat['specification'][0]['value']
+            for feat in features_one
+        ]
+        features_two_names = [
+            feat['specification'][0]['value']
+            for feat in features_two
+        ]
+
+        return list(set(features_one_names) - set(features_two_names))
 
     def boot_sequence(
         self,
