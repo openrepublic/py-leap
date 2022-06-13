@@ -69,6 +69,7 @@ class CLEOS:
         self.remote_endpoint = remote
 
         self.keys = {}
+        self.private_keys = {}
 
         self._sys_token_init = False
     
@@ -165,10 +166,18 @@ class CLEOS:
         self.__keosd_exec_id = exec_id
         self.__keosd_exec_stream = exec_stream
 
+        self.logger.info('Streaming keosd...')
+
         for msg in exec_stream:
             msg = msg.decode('utf-8')
+            self.logger.info(msg.rstrip())
             if 'add api url: /v1/node/get_supported_apis' in msg:
                 break
+
+    def stream_keosd(self):
+        assert self.is_keosd_running()
+        for msg in self.__keosd_exec_stream:
+            yield msg.decode('utf-8')
 
     def start_nodeos(
         self,
@@ -176,29 +185,44 @@ class CLEOS:
             'producer_plugin',
             'producer_api_plugin',
             'chain_api_plugin',
+            'net_plugin',
+            'net_api_plugin',
             'http_plugin',
             'history_plugin',
             'history_api_plugin'
         ],
         http_addr: str = '0.0.0.0:8888',
-        p2p_addr: str = '0.0.0.0:9876'
+        p2p_addr: str = '0.0.0.0:9876',
+        sig_provider: str = 'EOS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV=KEY:5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3',
+        producer_name: str = 'eosio',
+        data_dir: str = '/root/nodeos/data',
+        peers: List[str] = [],
+        paused: bool = False
     ):
-        exec_id, exec_stream = self.open_process(
-            ['nodeos',
-                '-e',
-                '-p', 'eosio',
-                *[f'--plugin={p}' for p in plugins],
-                f'--http-server-address=\'{http_addr}\'',
-                f'--p2p-listen-endpoint=\'{p2p_addr}\'',
-                '--abi-serializer-max-time-ms=999999',
-                '--filter-on=\'*\'',
-                '--access-control-allow-origin=\'*\'',
-                '--contracts-console',
-                '--http-validate-host=false',
-                '--verbose-http-errors'
-        ])
+        cmd = [
+            'nodeos',
+            '-e',
+            '-p', producer_name,
+            *[f'--plugin=eosio::{p}' for p in plugins],
+            f'--http-server-address={http_addr}',
+            f'--p2p-listen-endpoint={p2p_addr}',
+            '--abi-serializer-max-time-ms=999999',
+            '--access-control-allow-origin=\"*\"',
+            '--contracts-console',
+            '--http-validate-host=false',
+            '--verbose-http-errors',
+            f'--data-dir={data_dir}',
+            f'--signature-provider={sig_provider}',
+            *[f'--p2p-peer-address={peer}' for peer in peers]]
+
+        if paused:
+            cmd += ['-x']
+
+        exec_id, exec_stream = self.open_process(cmd)
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
+
+        self._nodeos_exec_stream = exec_stream
 
     def start_nodeos_from_config(
         self,
@@ -421,6 +445,8 @@ class CLEOS:
         
         cmd = [
             'cleos',
+            '--print-request',
+            '--print-response',
             '--url', self.url,
             'set', 'contract', account_name,
             str(wasm_path.parent),
@@ -546,7 +572,8 @@ class CLEOS:
     def boot_sequence(
         self,
         activations_node: Optional[str] = None,
-        sys_contracts_mount='/root/nodeos/contracts'
+        sys_contracts_mount='/root/nodeos/contracts',
+        verify_hash: bool = False 
     ):
         """Perform enterprise operating system bios sequence acording to:
 
@@ -594,19 +621,22 @@ class CLEOS:
         self.deploy_contract(
             'eosio.token',
             f'{sys_contracts_mount}/eosio.token',
-            staked=False
+            staked=False,
+            verify_hash=verify_hash
         )
 
         self.deploy_contract(
             'eosio.msig',
             f'{sys_contracts_mount}/eosio.msig',
-            staked=False
+            staked=False,
+            verify_hash=verify_hash
         )
 
         self.deploy_contract(
             'eosio.wrap',
             f'{sys_contracts_mount}/eosio.wrap',
-            staked=False
+            staked=False,
+            verify_hash=verify_hash
         )
 
         self.init_sys_token()
@@ -617,7 +647,8 @@ class CLEOS:
             'eosio.system',
             f'{sys_contracts_mount}/eosio.system',
             account_name='eosio',
-            create_account=False
+            create_account=False,
+            verify_hash=verify_hash
         )
 
         if not activations_node:
@@ -652,6 +683,51 @@ class CLEOS:
             'eosio@active'
         )
         assert ec == 0
+
+        # Telos specific
+
+        self.create_account_staked(
+            'eosio', 'telos.decide', ram=2700000)
+
+        self.deploy_contract(
+            'telos.decide',
+            f'{sys_contracts_mount}/telos.decide',
+            create_account=False,
+            verify_hash=verify_hash
+        )
+
+        for name in ['exrsrv.tf']:
+            self.create_account_staked('eosio', name)
+
+    # Producer API
+
+    def is_block_production_paused(self):
+        return requests.post(
+            f'{self.url}/v1/producer/paused').json()
+
+    def resume_block_production(self):
+        return requests.post(
+            f'{self.url}/v1/producer/resume').json()
+
+    def pause_block_production(self):
+        return requests.post(
+            f'{self.url}/v1/producer/pause').json()
+
+    # Net API
+
+    def connected_nodes(self):
+        return requests.post(
+            f'{self.url}/v1/net/connections').json()
+
+    def connect_node(self, endpoint: str):
+        return requests.post(
+            f'{self.url}/v1/net/connect',
+            json=endpoint).json()
+
+    def disconnect_node(self, endpoint: str):
+        return requests.post(
+            f'{self.url}/v1/net/disconnect',
+            json=endpoint).json()
 
     def create_key_pair(self) -> Tuple[str, str]:
         """Generate a new EOSIO key pair.
@@ -728,9 +804,9 @@ class CLEOS:
         # Step 1: Create a Wallet
         self.logger.info('create wallet...')
         ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'create', '--to-console'])
-        wallet_key = out.split('\n')[-2].strip('\"')
+        self.wallet_key = out.split('\n')[-2].strip('\"')
         assert ec == 0
-        assert len(wallet_key) == 53
+        assert len(self.wallet_key) == 53
         self.logger.info('wallet created')
 
         # Step 2: Open the Wallet
@@ -745,7 +821,7 @@ class CLEOS:
         # Step 3: Unlock it
         self.logger.info('unlock wallet...')
         ec, out = self.run(
-            ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', wallet_key]
+            ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', self.wallet_key]
         )
         assert ec == 0
 
@@ -912,6 +988,10 @@ class CLEOS:
         if dump_tx:
             cmd += ['-d', '-s']
         ec, out = self.run(cmd, retry=retry)
+
+        if 'ABI for contract eosio.null not found. Action data will be shown in hex only.' in out:
+            out = '\n'.join(out.split('\n')[1:])
+
         try:
             out = json.loads(out)
             
@@ -1049,6 +1129,7 @@ class CLEOS:
             priv, pub = self.create_key_pair()
             self.import_key(priv)
             key = pub
+            self.private_keys[name] = priv
 
         ec, out = self.run([
             'cleos', '--url', self.url,
@@ -1267,12 +1348,30 @@ class CLEOS:
 
         # when waiting for nodeos to start
         while (info := try_get_info()) == None:
+            if not self.is_nodeos_running():
+                ec, out = self.gather_nodeos_output()
+                self.logger.error(out)
+                raise AssertionError(f'Nodeos crashed with exitcode {ec}')
             time.sleep(sleep_time)
     
         start = self.get_info()['head_block_num']
-        while (info := self.get_info())['head_block_num'] - start < n:
-            self.logger.info(f'block num: {info["head_block_num"]}')
+        current = start
+        end = start + n
+        while (current := self.get_info()['head_block_num']) < end:
+            self.logger.info(f'block num: {current}, remaining: {end - current}')
             time.sleep(sleep_time)
+
+        if hasattr(self, 'wallet_key'):
+            # ensure wallet is still unlocked after wait
+            ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'list'])
+            assert ec == 0
+
+            if '*' not in out:
+                ec, out = self.run(
+                    ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', self.wallet_key]
+                )
+                assert ec == 0
+
 
     """Multi signature
     """
@@ -1704,6 +1803,10 @@ class CLEOS:
             ec, _ = self.issue_token('eosio', sys_token_init_issue, __name__)
             assert ec == 0
 
+    def get_global_state(self):
+        return self.get_table(
+            'eosio', 'eosio', 'global')[0]
+
     def rex_deposit(self, owner: str, quantity: str):
         return self.push_action(
             'eosio',
@@ -1720,6 +1823,33 @@ class CLEOS:
             f'{_from}@active'
         )
 
+    def delegate_bandwidth(
+        self,
+        _from: str,
+        _to: str,
+        net: str,
+        cpu: str
+    ):
+        return self.push_action(
+            'eosio',
+            'delegatebw',
+            [_from, _to, net, cpu, 0],
+            f'{_from}@active'
+        )
+
+    def register_producer(
+        self,
+        producer: str,
+        url: str = '',
+        location: int = 0
+    ):
+        return self.push_action(
+            'eosio',
+            'regproducer',
+            [producer, self.keys[producer], url, location],
+            f'{producer}@active'
+        )
+
     def vote_producers(
         self, 
         voter: str,
@@ -1733,11 +1863,19 @@ class CLEOS:
             f'{voter}@active'
         )
 
+    def claim_rewards(self, owner: str):
+        return self.push_action(
+            'eosio',
+            'claimrewards',
+            [owner],
+            f'{owner}@active'
+        )
+
     def get_schedule(self):
-        ec, out = self.run(['cleos', 'get', 'schedule'])
+        ec, out = self.run(['cleos', 'get', 'schedule', '-j'])
         
         if ec == 0:
-            return out
+            return json.loads(out) 
         else:
             return None
 
@@ -1747,6 +1885,27 @@ class CLEOS:
             'eosio',
             'producers'
         )
+
+    def get_producer(self, producer: str) -> Optional[Dict]:
+        rows = self.get_table(
+            'eosio', 'eosio', 'producers',
+            '--key-type', 'name', '--index', '1',
+            '--lower', producer,
+            '--upper', producer)
+
+        if len(rows) == 0:
+            return None
+        else:
+            return rows[0]
+
+    def get_payrate(self, producer: str) -> Optional[Dict]:
+        rows = self.get_table(
+            'eosio', 'eosio', 'payrate')
+
+        if len(rows) == 0:
+            return None
+        else:
+            return rows[0]
 
     def wrap_exec(
         self,

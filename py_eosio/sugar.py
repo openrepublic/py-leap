@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import time
 import json
+import socket
 import string
 import random
 import logging
@@ -472,7 +473,7 @@ def docker_wait_process(
 
     ec = info['ExitCode']
     if ec != 0:
-        logger.warning(msg.rstrip())
+        logger.warning(out.rstrip())
 
     return ec, out
 
@@ -499,3 +500,24 @@ def docker_move_into(
 
     client.api.put_archive(container, dst, binary_data)
 
+
+def get_free_port(tries=10):
+    _min = 10000
+    _max = 60000
+    found = False
+    
+    for i in range(tries):
+        port_num = random.randint(_min, _max)
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        try:
+            s.bind(("127.0.0.1", port_num))
+            s.close()
+
+        except socket.error as e:
+            continue
+
+        else:
+            return port_num
