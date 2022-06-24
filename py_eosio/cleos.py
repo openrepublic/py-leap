@@ -264,6 +264,18 @@ class CLEOS:
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
 
+    def stop_nodeos(self, from_file: Optional[str] = None):
+        # gracefull nodeos exit
+        proc_inf = self.open_process(['pkill', 'nodeos'])
+
+        ec, out = self.wait_process(*proc_inf)
+        self.logger.info(f'pkill nodeos: {ec}')
+        self.logger.info('await gracefull nodeos exit...')
+
+        self.wait_stopped(from_file=from_file) 
+
+        self.logger.info('nodeos exit.')
+
     def gather_nodeos_output(self) -> str:
         return self.wait_process(
             self.__nodeos_exec_id,
@@ -284,12 +296,10 @@ class CLEOS:
         return self.client.api.exec_inspect(
             self.__keosd_exec_id)['Running']
 
-    def wait_produced(self, from_file: Optional[str] = None):
+    def wait_for_phrase_in_nodeos_logs(self, phrase: str, from_file: Optional[str] = None):
         if from_file:
-            exec_id, exec_stream = docker_open_process(
-                    self.client, self.vtestnet,
-                    ['/bin/bash', '-c',
-                    f'tail -f {from_file}'])
+            exec_id, exec_stream = self.open_process(
+                ['/bin/bash', '-c', f'tail -f {from_file}'])
         else:
             exec_stream = self.vtestnet.logs(stream=True)
         
@@ -298,29 +308,19 @@ class CLEOS:
             msg = chunk.decode('utf-8')
             out += msg
             self.logger.info(msg.rstrip())
-            if 'Produced' in msg:
+            if phrase in msg:
                 break
 
         return out
+
+    def wait_stopped(self, from_file: Optional[str] = None):
+        return self.wait_for_phrase_in_nodeos_logs('nodeos successfully exiting', from_file=from_file)
+
+    def wait_produced(self, from_file: Optional[str] = None):
+        return self.wait_for_phrase_in_nodeos_logs('Produced', from_file=from_file)
 
     def wait_received(self, from_file: Optional[str] = None):
-        if from_file:
-            exec_id, exec_stream = docker_open_process(
-                    self.client, self.vtestnet,
-                    ['/bin/bash', '-c',
-                    f'tail -f {from_file}'])
-        else:
-            exec_stream = self.vtestnet.logs(stream=True)
-        
-        out = ''
-        for chunk in exec_stream:
-            msg = chunk.decode('utf-8')
-            out += msg
-            self.logger.info(msg.rstrip())
-            if 'Received' in msg:
-                break
-
-        return out
+        return self.wait_for_phrase_in_nodeos_logs('Received', from_file=from_file)
 
     def deploy_contract(
         self,
@@ -330,7 +330,8 @@ class CLEOS:
         account_name: Optional[str] = None,
         create_account: bool = True,
         staked: bool = True,
-        verify_hash: bool = True
+        verify_hash: bool = True,
+        debug: bool = False
     ):
         """Deploy a built contract inside the container.
 
@@ -445,8 +446,6 @@ class CLEOS:
         
         cmd = [
             'cleos',
-            '--print-request',
-            '--print-response',
             '--url', self.url,
             'set', 'contract', account_name,
             str(wasm_path.parent),
@@ -454,7 +453,10 @@ class CLEOS:
             abi_file,
             '-p', f'{account_name}@active'
         ]
-        
+       
+        if debug:
+            cmd = cmd[:1] + ['--print-response'] + cmd[1:]
+
         self.logger.info('contract deploy: ')
         ec, out = self.run(cmd, retry=6)
         self.logger.info(out)
