@@ -264,6 +264,8 @@ class CLEOS:
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
 
+        self.wait_produced(from_file=logfile) 
+
     def stop_nodeos(self, from_file: Optional[str] = None):
         # gracefull nodeos exit
         proc_inf = self.open_process(['pkill', 'nodeos'])
@@ -296,10 +298,15 @@ class CLEOS:
         return self.client.api.exec_inspect(
             self.__keosd_exec_id)['Running']
 
-    def wait_for_phrase_in_nodeos_logs(self, phrase: str, from_file: Optional[str] = None):
+    def wait_for_phrase_in_nodeos_logs(
+        self,
+        phrase: str,
+        lines: int = 100,
+        from_file: Optional[str] = None
+    ):
         if from_file:
             exec_id, exec_stream = self.open_process(
-                ['/bin/bash', '-c', f'tail -f {from_file}'])
+                ['/bin/bash', '-c', f'tail -n {lines} -f {from_file}'])
         else:
             exec_stream = self.vtestnet.logs(stream=True)
         
@@ -313,14 +320,14 @@ class CLEOS:
 
         return out
 
-    def wait_stopped(self, from_file: Optional[str] = None):
-        return self.wait_for_phrase_in_nodeos_logs('nodeos successfully exiting', from_file=from_file)
+    def wait_stopped(self, **kwargs):
+        return self.wait_for_phrase_in_nodeos_logs('nodeos successfully exiting', **kwargs)
 
-    def wait_produced(self, from_file: Optional[str] = None):
-        return self.wait_for_phrase_in_nodeos_logs('Produced', from_file=from_file)
+    def wait_produced(self, **kwargs):
+        return self.wait_for_phrase_in_nodeos_logs('Produced', **kwargs)
 
-    def wait_received(self, from_file: Optional[str] = None):
-        return self.wait_for_phrase_in_nodeos_logs('Received', from_file=from_file)
+    def wait_received(self, **kwargs):
+        return self.wait_for_phrase_in_nodeos_logs('Received', **kwargs)
 
     def deploy_contract(
         self,
@@ -451,7 +458,7 @@ class CLEOS:
             str(wasm_path.parent),
             wasm_file,
             abi_file,
-            '-p', f'{account_name}@active'
+            '-p', f'{account_name}@active', '-j'
         ]
        
         if debug:
@@ -459,10 +466,15 @@ class CLEOS:
 
         self.logger.info('contract deploy: ')
         ec, out = self.run(cmd, retry=6)
-        self.logger.info(out)
+
+        if debug:
+            self.logger.info(out)
 
         if ec == 0:
             self.logger.info('deployed')
+
+            # chop first two lines and return as json dict
+            return json.loads(out.split('\n', 2)[2])
 
         else:
             raise ContractDeployError(f'Couldn\'t deploy {account_name} contract.')

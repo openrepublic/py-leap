@@ -13,6 +13,7 @@ RUN mkdir -p /root/nodeos
 WORKDIR /root/nodeos
 COPY config.ini config.ini
 COPY contracts contracts
+COPY genesis genesis
 
 EXPOSE 8888
 EXPOSE 9876

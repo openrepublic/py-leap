@@ -42,9 +42,10 @@ def single_node_chain():
         cleos.start_nodeos_from_config(
             '/root/nodeos/config.ini',
             data_dir='/root/nodeos/data',
+            genesis='/root/nodeos/genesis/testnet.json',
             state_plugin=True)
 
-        cleos.setup_wallet('5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3')
+        cleos.setup_wallet('5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL')
         cleos.wait_blocks(1)
         cleos.boot_sequence()
 
