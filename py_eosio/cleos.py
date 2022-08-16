@@ -232,7 +232,8 @@ class CLEOS:
         data_dir: str = '/mnt/dev/data',
         snapshot: Optional[str] = None,
         logging_cfg: Optional[str] = None,
-        logfile: Optional[str] = '/root/nodeos.log'
+        logfile: Optional[str] = '/root/nodeos.log',
+        is_local: bool = True
     ):
         cmd = [
             'nodeos',
@@ -264,7 +265,10 @@ class CLEOS:
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
 
-        self.wait_produced(from_file=logfile) 
+        if is_local:
+            self.wait_produced(from_file=logfile)
+        else:
+            self.wait_received(from_file=logfile)
 
     def stop_nodeos(self, from_file: Optional[str] = None):
         # gracefull nodeos exit
@@ -994,7 +998,6 @@ class CLEOS:
             else arg
             for arg in args
         ]
-        self.logger.info(f"push action: {action}({args}) as {permissions}")
         cmd = [
             'cleos', '--url', self.url, 'push', 'action', contract, action,
             json.dumps(args), '-p', permissions, '-j', '-f'
