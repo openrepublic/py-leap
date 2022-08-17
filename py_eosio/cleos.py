@@ -1364,19 +1364,22 @@ class CLEOS:
                 return None
 
         # when waiting for nodeos to start
-        while (info := try_get_info()) == None:
+        info = try_get_info()
+        while info == None:
             if not self.is_nodeos_running():
                 ec, out = self.gather_nodeos_output()
                 self.logger.error(out)
                 raise AssertionError(f'Nodeos crashed with exitcode {ec}')
             time.sleep(sleep_time)
+            info = try_get_info()
     
         start = self.get_info()['head_block_num']
         current = start
         end = start + n
-        while (current := self.get_info()['head_block_num']) < end:
+        while current < end:
             self.logger.info(f'block num: {current}, remaining: {end - current}')
             time.sleep(sleep_time)
+            current = self.get_info()['head_block_num']
 
         if hasattr(self, 'wallet_key'):
             # ensure wallet is still unlocked after wait
