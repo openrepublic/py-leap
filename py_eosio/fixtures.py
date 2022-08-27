@@ -9,20 +9,12 @@ import docker
 import pytest
 import requests
 
-from .cleos import CLEOS
+from .cleos import CLEOS, default_nodeos_image
 from .sugar import (
     get_container,
     get_free_port,
     random_eosio_name
 )
-
-
-DEFAULT_NODEOS_REPO = 'guilledk/py-eosio'
-DEFAULT_NODEOS_IMAGE = 'eosio-2.1.0'
-
-
-def default_nodeos_image():
-    return f'{DEFAULT_NODEOS_REPO}:{DEFAULT_NODEOS_IMAGE}'
 
 
 @pytest.fixture(scope='session')
@@ -37,13 +29,16 @@ def single_node_chain():
 
     try:
         cleos = CLEOS(dclient, vtestnet)
+
         cleos.start_keosd()
 
         cleos.start_nodeos_from_config(
             '/root/nodeos/config.ini',
             data_dir='/root/nodeos/data',
-            genesis='/root/nodeos/genesis/testnet.json',
+            genesis='/root/nodeos/genesis/local.json',
             state_plugin=True)
+
+        time.sleep(0.5)
 
         cleos.setup_wallet('5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL')
         cleos.wait_blocks(1)
@@ -115,7 +110,7 @@ def multi_node_chain():
             voter, '', producers)
 
         assert ec == 0
-        
+
         # pause block production on 'eosio' producer
         cleos.pause_block_production()
 
@@ -130,7 +125,7 @@ def multi_node_chain():
 
             api = CLEOS(
                 dclient, container, url=f'http://127.0.0.1:{http_port}')
-            
+
             api.start_nodeos(
                 http_addr=f'127.0.0.1:{http_port}',
                 p2p_addr=f'127.0.0.1:{p2p_port}',
@@ -150,7 +145,7 @@ def multi_node_chain():
         # perform peer connections
         for i in range(node_amount):
             api = apis[i]
-            
+
             status = api.connect_node('127.0.0.1:9876')
             assert status == 'added connection'
 

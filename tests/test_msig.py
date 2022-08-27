@@ -10,7 +10,7 @@ def test_multi_sig_contract(msig_contract):
 
     owner_perms = [f'{name}@active' for name in (a, b)]
     owner_perms.sort()
-    
+
     proposal = cleos.multi_sig_propose(
         a,
         owner_perms,

@@ -45,6 +45,18 @@ from .typing import (
 )
 
 
+EOSIO_V = 'eosio-2.1.0'
+LEAP_V = 'leap-3.1.0'
+
+
+DEFAULT_NODEOS_REPO = 'guilledk/py-eosio'
+DEFAULT_NODEOS_IMAGE = EOSIO_V 
+
+
+def default_nodeos_image():
+    return f'{DEFAULT_NODEOS_REPO}:{DEFAULT_NODEOS_IMAGE}'
+
+
 class CLEOS:
 
     def __init__(
@@ -64,7 +76,7 @@ class CLEOS:
             self.logger = logging.getLogger('cleos')
         else:
             self.logger = logger
-        
+
         self.endpoint = url
         self.remote_endpoint = remote
 
@@ -72,7 +84,7 @@ class CLEOS:
         self.private_keys = {}
 
         self._sys_token_init = False
-    
+
     def run(
         self,
         cmd: List[str],
@@ -111,7 +123,7 @@ class CLEOS:
                 break
 
             self.logger.warning(f'cmd run retry num {i}...')
-              
+
         out = out.decode('utf-8')
 
         if ec != 0:
@@ -313,7 +325,7 @@ class CLEOS:
                 ['/bin/bash', '-c', f'tail -n {lines} -f {from_file}'])
         else:
             exec_stream = self.vtestnet.logs(stream=True)
-        
+
         out = ''
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
@@ -360,7 +372,7 @@ class CLEOS:
             hashes.
         """
         self.logger.info(f'contract {contract_name}:')
-        
+
         account_name = contract_name if not account_name else account_name
 
         if create_account:
@@ -423,10 +435,10 @@ class CLEOS:
                 retry=0
             )
             assert ec == 0
-            
+
             local_shasum = out.split(' ')[0]
             self.logger.info(f'local sum: {local_shasum}')
-    
+
             self.logger.info(f'asking remote {self.remote_endpoint}...')
             resp = requests.post(
                 f'{self.remote_endpoint}/v1/chain/get_code',
@@ -454,7 +466,7 @@ class CLEOS:
         self.logger.info(f'wasm path: {wasm_path}')
         self.logger.info(f'wasm: {wasm_file}')
         self.logger.info(f'abi: {abi_file}')
-        
+
         cmd = [
             'cleos',
             '--url', self.url,
@@ -464,7 +476,7 @@ class CLEOS:
             abi_file,
             '-p', f'{account_name}@active', '-j'
         ]
-       
+
         if debug:
             cmd = cmd[:1] + ['--print-response'] + cmd[1:]
 
@@ -545,7 +557,7 @@ class CLEOS:
                 }
             )
             resp = r.json()
-    
+
             assert 'activated_protocol_features' in resp
             features += resp['activated_protocol_features']
             lower_bound += step
@@ -600,7 +612,7 @@ class CLEOS:
         This includes:
 
             1) Creating the following accounts:
-            
+
                 - ``eosio.bpay``
                 - ``eosio.names``
                 - ``eosio.ram``
@@ -869,7 +881,7 @@ class CLEOS:
 
     def get_feature_digest(self, feature_name: str) -> str:
         """Given a feature name, query the v1 API endpoint: 
-        
+
             ``/v1/producer/get_supported_protocol_features``
 
         to retrieve hash digest.
@@ -906,7 +918,7 @@ class CLEOS:
                 'protocol_features_to_activate': [digest]
             }
         ).json()
-        
+
         self.logger.info(json.dumps(r, indent=4))
 
         assert 'result' in r
@@ -959,7 +971,7 @@ class CLEOS:
             ['cleos', 'sign', '--public-key', key, '-c', chain_id, tx] + push)
         try:
             out = json.loads(out)
-            
+
         except (json.JSONDecodeError, TypeError):
             ...
 
@@ -973,7 +985,8 @@ class CLEOS:
         args: List[str],
         permissions: str,
         retry: int = 3,
-        dump_tx: bool = False
+        dump_tx: bool = False,
+        sign: bool = True
     ) -> ActionResult:
         """Execute an action defined in a given contract, in case of failure retry.
 
@@ -1003,7 +1016,14 @@ class CLEOS:
             json.dumps(args), '-p', permissions, '-j', '-f'
         ]
         if dump_tx:
-            cmd += ['-d', '-s']
+            cmd += ['-d']
+
+        if not sign:
+            cmd += ['-s']
+
+        if DEFAULT_NODEOS_IMAGE == LEAP_V:
+            cmd += ['--use-old-rpc', '-t', 'false']
+
         ec, out = self.run(cmd, retry=retry)
 
         if 'ABI for contract eosio.null not found. Action data will be shown in hex only.' in out:
@@ -1011,7 +1031,7 @@ class CLEOS:
 
         try:
             out = json.loads(out)
-            
+
         except (json.JSONDecodeError, TypeError):
             ...
 
@@ -1042,7 +1062,7 @@ class CLEOS:
         ec, out = self.run(cmd, retry=retry)
         try:
             out = json.loads(out)
-            
+
         except (json.JSONDecodeError, TypeError):
             ...
 
@@ -1074,7 +1094,7 @@ class CLEOS:
 
         :param actions: A tuple of four iterators, each iterator when consumed
             produces one of the following attriubutes:
-                
+
             ``contract name``, ``action name``, ``arguments list`` and ``permissions``
 
         :return: A list the results for each action execution.
@@ -1284,7 +1304,12 @@ class CLEOS:
 
         return self.get_table('eosio', account, 'userres')
 
-    def new_account(self, name: Optional[str] = None, **kwargs) -> str:
+    def new_account(
+        self,
+        name: Optional[str] = None,
+        owner: str = 'eosio',
+        **kwargs
+    ) -> str:
         """Create a new account with a random key and name, import the private
         key into the wallet.
 
@@ -1304,7 +1329,7 @@ class CLEOS:
             self.import_key(private_key)
             kwargs['key'] = public_key
 
-        self.create_account_staked('eosio', account_name, **kwargs)
+        self.create_account_staked(owner, account_name, **kwargs)
         return account_name
 
     def new_accounts(self, n: int) -> List[str]:
@@ -1537,6 +1562,10 @@ class CLEOS:
             proposal_name,
             '-p', permission
         ]
+
+        if DEFAULT_NODEOS_IMAGE == LEAP_V:
+            cmd += ['--use-old-rpc', '-t', 'false']
+
         ec, out = self.run(cmd)
 
         if ec == 0:
@@ -1580,7 +1609,7 @@ class CLEOS:
 
         :param sym: Token symbol.
         :param token_contract: Token contract.
-        
+
         :return: A dictionary with ``\'supply\'``, ``\'max_supply\'`` and
             ``\'issuer\'`` as keys.
         :rtype: Dict[str, str]
@@ -1598,7 +1627,7 @@ class CLEOS:
         token_contract: str = 'eosio.token'
     ) -> Optional[str]:
         """Get account balance.
-        
+
         :param account: Account to query.
         :param token_contract: Token contract.
 
@@ -1793,7 +1822,7 @@ class CLEOS:
     ) -> ActionResult:
         """This action is the opposite for open, it closes the account `owner`
         for token `sym`.
-        
+
         :param owner: the owner account to execute the close action for,
         :param symbol: the symbol of the token to execute the close action for.
 
@@ -1893,7 +1922,7 @@ class CLEOS:
 
     def get_schedule(self):
         ec, out = self.run(['cleos', 'get', 'schedule', '-j'])
-        
+
         if ec == 0:
             return json.loads(out) 
         else:

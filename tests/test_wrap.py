@@ -3,7 +3,7 @@
 import json
 
 from py_eosio.sugar import random_eosio_name
-
+from py_eosio.cleos import DEFAULT_NODEOS_IMAGE, EOSIO_V
 
 # TODO: better testing, as right now we dont have multi producer setup
 
@@ -16,7 +16,8 @@ def test_wrap_exec_direct(cleos):
         'transfer',
         ['eosio', worker, quantity, ''],
         'eosio@active',
-        dump_tx=True
+        dump_tx=True,
+        sign=False
     )
     assert ec == 0
 
@@ -24,23 +25,23 @@ def test_wrap_exec_direct(cleos):
     tx['ref_block_prefix'] = 0
     tx['context_free_actions'] = []
 
-    ec, tx = cleos.wrap_exec('eosio.wrap', tx, dump_tx=True)
+    if DEFAULT_NODEOS_IMAGE == EOSIO_V:
+        # for eosio 2.1.0 handle diferent tx format
+        tx['transaction_extensions'] = []
+        tx['actions'][0]['data'] = tx['actions'][0]['hex_data']
+        del tx['actions'][0]['hex_data']
+
+    ec, tx = cleos.wrap_exec(
+        'eosio.wrap',
+        tx,
+        dump_tx=True,
+        sign=False
+    )
     assert ec == 0
 
     tx['ref_block_num'] = 0
     tx['ref_block_prefix'] = 0
     tx['context_free_actions'] = []
-
-    # ec, tx_ws = cleos.sign_transaction(
-    #     cleos.keys[worker], tx)
-    # assert ec == 0
-
-    # ec, tx = cleos.sign_transaction(
-    #     cleos.keys['eosio.wrap'], tx)
-    # assert ec == 0
-
-    # tx['signatures'] += tx_ws['signatures']
-    # tx['signatures'] += tx_es['signatures']
 
     ec, out = cleos.push_transaction(tx)
     cleos.logger.info(out)
