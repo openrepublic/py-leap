@@ -50,7 +50,7 @@ LEAP_V = 'leap-3.1.0'
 
 
 DEFAULT_NODEOS_REPO = 'guilledk/py-eosio'
-DEFAULT_NODEOS_IMAGE = EOSIO_V 
+DEFAULT_NODEOS_IMAGE = LEAP_V
 
 
 def default_nodeos_image():
