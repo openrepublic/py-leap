@@ -199,17 +199,17 @@ class CLEOS:
             'chain_api_plugin',
             'net_plugin',
             'net_api_plugin',
-            'http_plugin',
-            'history_plugin',
-            'history_api_plugin'
+            'http_plugin'
         ],
         http_addr: str = '0.0.0.0:8888',
         p2p_addr: str = '0.0.0.0:9876',
+        genesis: Optional[str] = None,
         sig_provider: str = 'EOS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV=KEY:5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3',
         producer_name: str = 'eosio',
         data_dir: str = '/root/nodeos/data',
         peers: List[str] = [],
-        paused: bool = False
+        paused: bool = False,
+        not_shutdown_thresh_exeded: bool = False
     ):
         cmd = [
             'nodeos',
@@ -230,6 +230,12 @@ class CLEOS:
         if paused:
             cmd += ['-x']
 
+        if genesis:
+            cmd += [f'--genesis-json={genesis}']
+
+        if not_shutdown_thresh_exeded:
+            cmd += ['--resource-monitor-not-shutdown-on-threshold-exceeded']
+
         exec_id, exec_stream = self.open_process(cmd)
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
@@ -245,7 +251,8 @@ class CLEOS:
         snapshot: Optional[str] = None,
         logging_cfg: Optional[str] = None,
         logfile: Optional[str] = '/root/nodeos.log',
-        is_local: bool = True
+        is_local: bool = True,
+        not_shutdown_thresh_exeded: bool = False
     ):
         cmd = [
             'nodeos',
@@ -267,6 +274,9 @@ class CLEOS:
         if logging_cfg:
             cmd += [f'--logconf={logging_cfg}']
 
+        if not_shutdown_thresh_exeded:
+            cmd += ['--resource-monitor-not-shutdown-on-threshold-exceeded']
+
         if logfile:
             cmd += [f'> {logfile} 2>&1'] 
 
@@ -278,9 +288,9 @@ class CLEOS:
         self.__nodeos_exec_stream = exec_stream
 
         if is_local:
-            self.wait_produced(from_file=logfile)
+            return self.wait_produced(from_file=logfile)
         else:
-            self.wait_received(from_file=logfile)
+            return self.wait_received(from_file=logfile)
 
     def stop_nodeos(self, from_file: Optional[str] = None):
         # gracefull nodeos exit
@@ -324,7 +334,7 @@ class CLEOS:
             exec_id, exec_stream = self.open_process(
                 ['/bin/bash', '-c', f'tail -n {lines} -f {from_file}'])
         else:
-            exec_stream = self.vtestnet.logs(stream=True)
+            exec_stream = self.__nodeos_exec_stream
 
         out = ''
         for chunk in exec_stream:
@@ -643,7 +653,13 @@ class CLEOS:
             'eosio.saving',
             'eosio.stake',
             'eosio.vpay',
-            'eosio.rex'
+            # 'eosio.null',
+            'eosio.rex',
+
+            # custom telos
+            'eosio.tedp',
+            'works.decide',
+            'amend.decide'
         ]:
             ec, _ = self.create_account('eosio', name)
             assert ec == 0 
@@ -878,6 +894,11 @@ class CLEOS:
     def list_keys(self):
         return self.run(
             ['cleos', 'wallet', 'list'])
+
+    def unlock_wallet(self):
+        return self.run(
+            ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', self.wallet_key]
+        )
 
     def get_feature_digest(self, feature_name: str) -> str:
         """Given a feature name, query the v1 API endpoint: 
@@ -1921,7 +1942,8 @@ class CLEOS:
         )
 
     def get_schedule(self):
-        ec, out = self.run(['cleos', 'get', 'schedule', '-j'])
+        ec, out = self.run([
+            'cleos', '--url', self.url, 'get', 'schedule', '-j'])
 
         if ec == 0:
             return json.loads(out) 

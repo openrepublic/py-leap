@@ -61,15 +61,25 @@ def multi_node_chain():
     dclient = docker.from_env()
     node_amount = 3
 
-    container = dclient.containers.run(
+    eosio_container = dclient.containers.run(
         default_nodeos_image(),
         detach=True,
         network='host',
         remove=True)
+
+    node_containers = [
+        dclient.containers.run(
+            default_nodeos_image(),
+            detach=True,
+            network='host',
+            remove=True)
+        for i in range(node_amount)
+    ]
+
     logger.info('Container launched')
 
     try:
-        cleos = CLEOS(dclient, container, logger=logger)
+        cleos = CLEOS(dclient, eosio_container, logger=logger)
 
         keosd_port = get_free_port()
 
@@ -79,11 +89,13 @@ def multi_node_chain():
         cleos.start_nodeos_from_config(
             '/root/nodeos/config.ini',
             data_dir='/root/nodeos/data',
-            state_plugin=True)
+            state_plugin=True,
+            genesis='/root/nodeos/genesis/local.json',
+            not_shutdown_thresh_exeded=True)
 
         time.sleep(0.5)
 
-        cleos.setup_wallet('5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3')
+        cleos.setup_wallet('5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL')
         cleos.boot_sequence()
 
         # create producer accounts
@@ -119,20 +131,26 @@ def multi_node_chain():
         # init producer nodes
         apis = []
         ports = []
-        for producer in producers:
+        for i, producer in enumerate(producers):
             http_port = get_free_port()
             p2p_port = get_free_port()
 
             api = CLEOS(
-                dclient, container, url=f'http://127.0.0.1:{http_port}')
+                dclient,
+                node_containers[i],
+                url=f'http://127.0.0.1:{http_port}')
 
             api.start_nodeos(
                 http_addr=f'127.0.0.1:{http_port}',
                 p2p_addr=f'127.0.0.1:{p2p_port}',
+                genesis='/root/nodeos/genesis/local.json',
                 sig_provider=f'{cleos.keys[producer]}=KEY:{cleos.private_keys[producer]}',
                 producer_name=producer,
                 data_dir=f'/root/nodeos-{producer}/data',
-                paused=True)
+                paused=True,
+                not_shutdown_thresh_exeded=True)
+
+            api.wait_for_phrase_in_nodeos_logs('start listening for http requests')
 
             ports.append({
                 'http': http_port,
@@ -162,40 +180,35 @@ def multi_node_chain():
         state = cleos.get_global_state()
         cleos.wait_blocks(1000 - (state['block_num'] + 1), sleep_time=10)
 
-        state = cleos.get_global_state()
-        last_claim_time = float(state['last_claimrewards'])
+        # eosio_container.stop()
 
-        cleos.wait_blocks(3588, sleep_time=10)
+        api = apis[0]
 
-        init_state = cleos.get_global_state()
-        schedule = cleos.get_schedule()
+        state = api.get_global_state()
+
+        api.wait_blocks(3550, sleep_time=10)
+
+        init_state = api.get_global_state()
+        schedule = api.get_schedule()
 
         assert schedule['active']['version'] == 1
-        assert last_claim_time == float(
-            cleos.get_global_state()['last_claimrewards'])
 
         total_unpaid_pinfo = 0
         for producer in producers:
-            pinfo = cleos.get_producer(producer)
+            pinfo = api.get_producer(producer)
             total_unpaid_pinfo += pinfo['unpaid_blocks']
 
-        pinfo = cleos.get_producer(producers[0])
+        pinfo = api.get_producer(producers[0])
 
         assert pinfo['is_active']
         assert 1 < pinfo['unpaid_blocks']
 
-        assert total_unpaid_pinfo == init_state['total_unpaid_blocks']
+        ec, _ = cleos.unlock_wallet()
+        assert ec == 0
 
-        ec, out = cleos.claim_rewards(producers[0])
-        assert ec != 0
-        assert 'No payment exists for account' in out 
-
-        cleos.wait_blocks(200)
-   
-        pinfo = cleos.get_producer(producers[0])
-        state = cleos.get_global_state()
-
-        yield cleos
+        yield cleos, apis
 
     finally:
-        container.stop()
+        eosio_container.stop()
+        for container in node_containers:
+            container.stop()
