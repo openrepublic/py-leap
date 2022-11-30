@@ -300,7 +300,7 @@ class CLEOS:
         self.logger.info(f'pkill nodeos: {ec}')
         self.logger.info('await gracefull nodeos exit...')
 
-        self.wait_stopped(from_file=from_file) 
+        self.wait_stopped(from_file=from_file, timeout=120)
 
         self.logger.info('nodeos exit.')
 
@@ -328,11 +328,12 @@ class CLEOS:
         self,
         phrase: str,
         lines: int = 100,
+        timeout: int = 60,
         from_file: Optional[str] = None
     ):
         if from_file:
             exec_id, exec_stream = self.open_process(
-                ['/bin/bash', '-c', f'tail -n {lines} -f {from_file}'])
+                ['/bin/bash', '-c', f'timeout {timeout}s tail -n {lines} -f {from_file}'])
         else:
             exec_stream = self.__nodeos_exec_stream
 
@@ -889,11 +890,16 @@ class CLEOS:
         # Step 5: Import the Development Key
         self.logger.info('import development key...')
         self.keys['eosio'] = self.import_key(dev_key)
+        self.private_keys['eosio'] = dev_key
         self.logger.info('imported dev key')
 
     def list_keys(self):
         return self.run(
             ['cleos', 'wallet', 'list'])
+
+    def list_all_keys(self):
+        return self.run(
+            ['cleos', 'wallet', 'private_keys', f'--password={self.wallet_key}'])
 
     def unlock_wallet(self):
         return self.run(
@@ -1152,6 +1158,7 @@ class CLEOS:
             priv, pub = self.create_key_pair()
             self.import_key(priv)
             key = pub
+            self.private_keys[name] = priv
 
         ec, out = self.run(['cleos', '--url', self.url, 'create', 'account', owner, name, key])
         assert ec == 0
