@@ -47,8 +47,8 @@ def single_node_chain():
         yield cleos
 
     finally:
-        ec, out = cleos.list_all_keys()
-        logging.info(out)
+        # ec, out = cleos.list_all_keys()
+        # logging.info(out)
         vtestnet.stop()
         vtestnet.remove()
 

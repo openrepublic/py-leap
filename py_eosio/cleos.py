@@ -203,13 +203,16 @@ class CLEOS:
         ],
         http_addr: str = '0.0.0.0:8888',
         p2p_addr: str = '0.0.0.0:9876',
+        hist_addr: Optional[str] = None,
         genesis: Optional[str] = None,
+        snapshot: Optional[str] = None,
         sig_provider: str = 'EOS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV=KEY:5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3',
         producer_name: str = 'eosio',
         data_dir: str = '/root/nodeos/data',
         peers: List[str] = [],
         paused: bool = False,
-        not_shutdown_thresh_exeded: bool = False
+        not_shutdown_thresh_exeded: bool = False,
+        extra_params: List[str] = []
     ):
         cmd = [
             'nodeos',
@@ -230,11 +233,22 @@ class CLEOS:
         if paused:
             cmd += ['-x']
 
+        if snapshot:
+            cmd += [f'--snapshot={snapshot}']
+
         if genesis:
             cmd += [f'--genesis-json={genesis}']
 
         if not_shutdown_thresh_exeded:
             cmd += ['--resource-monitor-not-shutdown-on-threshold-exceeded']
+
+        if 'state_history_plugin' in plugins:
+            # https://github.com/EOSIO/eos/issues/6334
+            assert hist_addr
+            cmd += [f'--state-history-endpoint={hist_addr}']
+            cmd += ['--disable-replay-opts']
+
+        cmd += extra_params
 
         exec_id, exec_stream = self.open_process(cmd)
         self.__nodeos_exec_id = exec_id
@@ -552,6 +566,13 @@ class CLEOS:
             staked=staked,
             verify_hash=verify_hash
         )
+
+    def create_snapshot(self, target_url: str):
+        resp = requests.post(
+            f'http://{target_url}/v1/producer/create_snapshot'
+        )
+        assert resp.status_code >= 200 and resp.status_code <= 299
+        return resp.json()
 
     def get_node_activations(self, target_url: str) -> List[Dict]:
         lower_bound = 0

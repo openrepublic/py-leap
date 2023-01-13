@@ -485,7 +485,7 @@ def docker_move_into(
     dst: Union[str, Path]
 ):
     tmp_name = random_string(size=32)
-    archive_loc = Path(tmp_name + '.tar.gz').resolve()
+    archive_loc = Path(f'/tmp/{tmp_name}.tar.gz').resolve()
 
     with tarfile.open(archive_loc, mode='w:gz') as archive:
         archive.add(src, recursive=True)
@@ -501,11 +501,37 @@ def docker_move_into(
     client.api.put_archive(container, dst, binary_data)
 
 
+def docker_move_out(
+    client,
+    container: Union[str, Container],
+    src: Union[str, Path],
+    dst: Union[str, Path]
+):
+    tmp_name = random_string(size=32)
+    archive_loc = Path(f'/tmp/{tmp_name}.tar.gz').resolve()
+
+    bits, stats = container.get_archive(src, encode_stream=True)
+
+    with open(archive_loc, mode='wb+') as archive:
+        for chunk in bits:
+            archive.write(chunk)
+
+    extract_path = Path(dst).resolve()
+
+    if extract_path.is_file():
+        extract_path = extract_path.parent
+
+    with tarfile.open(archive_loc, 'r') as archive:
+        archive.extractall(path=extract_path)
+
+    archive_loc.unlink()
+
+
 def get_free_port(tries=10):
     _min = 10000
     _max = 60000
     found = False
-    
+
     for i in range(tries):
         port_num = random.randint(_min, _max)
 
