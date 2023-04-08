@@ -266,14 +266,16 @@ class CLEOS:
         logging_cfg: Optional[str] = None,
         logfile: Optional[str] = '/root/nodeos.log',
         is_local: bool = True,
-        not_shutdown_thresh_exeded: bool = False
+        not_shutdown_thresh_exeded: bool = False,
+        extra_params: List[str] = []
     ):
         cmd = [
             'nodeos',
             '-e',
             '-p', 'eosio',
             f'--data-dir={data_dir}',
-            f'--config={config}' 
+            f'--config={config}',
+            *extra_params
         ]
         if state_plugin:
             # https://github.com/EOSIO/eos/issues/6334
@@ -293,6 +295,7 @@ class CLEOS:
 
         if logfile:
             cmd += [f'> {logfile} 2>&1'] 
+
 
         final_cmd = ['/bin/bash', '-c', ' '.join(cmd)]
 
@@ -711,13 +714,15 @@ class CLEOS:
 
         self.activate_feature_v1('PREACTIVATE_FEATURE')
 
-        self.deploy_contract(
+        self.sys_deploy_info = self.deploy_contract(
             'eosio.system',
             f'{sys_contracts_mount}/eosio.system',
             account_name='eosio',
             create_account=False,
             verify_hash=verify_hash
         )
+
+        self.wait_blocks(3)
 
         if not activations_node:
             activations_node = self.remote_endpoint
@@ -1337,10 +1342,9 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: Dict[str, Union[str, int]]
         """
-
-        ec, out = self.run(['cleos', '--url', self.url, 'get', 'info'])
-        assert ec == 0
-        return json.loads(out)
+        resp = requests.get(f'{self.url}/v1/chain/get_info')
+        assert resp.status_code == 200
+        return resp.json()
 
     def get_resources(self, account: str) -> List[Dict]:
         """Get account resources.
@@ -1446,7 +1450,7 @@ class CLEOS:
                 raise AssertionError(f'Nodeos crashed with exitcode {ec}')
             time.sleep(sleep_time)
             info = try_get_info()
-    
+
         start = self.get_info()['head_block_num']
         current = start
         end = start + n
