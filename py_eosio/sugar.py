@@ -5,9 +5,12 @@ from __future__ import annotations
 import re
 import time
 import json
+import socket
 import string
 import random
 import logging
+import tarfile
+import tempfile
 
 from typing import Dict, Optional
 from decimal import Decimal
@@ -18,6 +21,7 @@ from binascii import hexlify
 
 from natsort import natsorted
 from docker.errors import NotFound
+from docker.models.containers import Container
 
 from .typing import ExecutionStream, ExecutionResult
 
@@ -463,9 +467,83 @@ def docker_wait_process(
     out = ''
     for chunk in exec_stream:
         msg = chunk.decode('utf-8')
-        logger.info(msg.rstrip())
         out += msg
 
     info = client.api.exec_inspect(exec_id)
 
-    return info['ExitCode'], out
+    ec = info['ExitCode']
+    if ec != 0:
+        logger.warning(out.rstrip())
+
+    return ec, out
+
+
+def docker_move_into(
+    client,
+    container: Union[str, Container],
+    src: Union[str, Path],
+    dst: Union[str, Path]
+):
+    tmp_name = random_string(size=32)
+    archive_loc = Path(f'/tmp/{tmp_name}.tar.gz').resolve()
+
+    with tarfile.open(archive_loc, mode='w:gz') as archive:
+        archive.add(src, recursive=True)
+
+    with open(archive_loc, 'rb') as archive:
+        binary_data = archive.read()
+
+    archive_loc.unlink()
+
+    if isinstance(container, Container):
+        container = container.id
+
+    client.api.put_archive(container, dst, binary_data)
+
+
+def docker_move_out(
+    client,
+    container: Union[str, Container],
+    src: Union[str, Path],
+    dst: Union[str, Path]
+):
+    tmp_name = random_string(size=32)
+    archive_loc = Path(f'/tmp/{tmp_name}.tar.gz').resolve()
+
+    bits, stats = container.get_archive(src, encode_stream=True)
+
+    with open(archive_loc, mode='wb+') as archive:
+        for chunk in bits:
+            archive.write(chunk)
+
+    extract_path = Path(dst).resolve()
+
+    if extract_path.is_file():
+        extract_path = extract_path.parent
+
+    with tarfile.open(archive_loc, 'r') as archive:
+        archive.extractall(path=extract_path)
+
+    archive_loc.unlink()
+
+
+def get_free_port(tries=10):
+    _min = 10000
+    _max = 60000
+    found = False
+
+    for i in range(tries):
+        port_num = random.randint(_min, _max)
+
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+
+        try:
+            s.bind(("127.0.0.1", port_num))
+            s.close()
+
+        except socket.error as e:
+            continue
+
+        else:
+            return port_num

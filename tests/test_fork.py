@@ -1,62 +1,20 @@
 #!/usr/bin/env python3
 
 import time
-import json
-import string
-import logging
+
+from pathlib import Path
 
 import docker
-import pytest
-import requests
 
-from .cleos import CLEOS, default_nodeos_image
-from .sugar import (
+from py_eosio.cleos import CLEOS, default_nodeos_image
+from py_eosio.sugar import (
     get_container,
-    get_free_port,
-    random_eosio_name
+    docker_move_out,
+    docker_move_into
 )
 
 
-@pytest.fixture(scope='session')
-def single_node_chain():
-    dclient = docker.from_env()
-    vtestnet = get_container(
-        dclient,
-        default_nodeos_image(),
-        force_unique=True,
-        detach=True,
-        network='host')
-
-    try:
-        cleos = CLEOS(dclient, vtestnet)
-
-        cleos.start_keosd()
-
-        cleos.start_nodeos_from_config(
-            '/root/nodeos/config.ini',
-            data_dir='/root/nodeos/data',
-            genesis='/root/nodeos/genesis/local.json',
-            state_plugin=True)
-
-        time.sleep(0.5)
-
-        cleos.setup_wallet('5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL')
-        cleos.wait_blocks(1)
-        cleos.boot_sequence()
-
-        yield cleos
-
-    finally:
-        # ec, out = cleos.list_all_keys()
-        # logging.info(out)
-        vtestnet.stop()
-        vtestnet.remove()
-
-
-
-
-@pytest.fixture(scope='session')
-def multi_node_chain():
+def test_fork(multi_cleos):
 
     logger = logging.getLogger('cleos')
 
@@ -128,6 +86,17 @@ def multi_node_chain():
         # pause block production on 'eosio' producer
         cleos.pause_block_production()
 
+        # create snapshot
+        snap_info = cleos.create_snapshot('localhost:8888')
+
+        docker_move_out(
+            dclient,
+            cleos.vtestnet,
+            snap_info['snapshot_name'], '/tmp/'
+        )
+
+        snap_name = Path(snap_info['snapshot_name']).name
+
         logger.info(f'Is block production paused: {cleos.is_block_production_paused()}') 
 
         # init producer nodes
@@ -137,20 +106,44 @@ def multi_node_chain():
             http_port = get_free_port()
             p2p_port = get_free_port()
 
+            docker_move_into(
+                dclient,
+                node_containers[i],
+                f'/tmp/{snap_name}', '/root'
+            )
+
             api = CLEOS(
                 dclient,
                 node_containers[i],
                 url=f'http://127.0.0.1:{http_port}')
 
+            opt_params = {}
+            if i == len(producers) - 1:
+                opt_params['extra_params'] = [
+                    '--last-block-time-offset=0',
+                    '--last-block-cpu-effort-percent=100'
+                ]
+                opt_params['hist_addr'] = '127.0.0.1:19999'
+                opt_params['plugins'] = [
+                    'producer_plugin',
+                    'producer_api_plugin',
+                    'chain_api_plugin',
+                    'net_plugin',
+                    'net_api_plugin',
+                    'http_plugin',
+                    'state_history_plugin'
+                ]
+
             api.start_nodeos(
                 http_addr=f'127.0.0.1:{http_port}',
                 p2p_addr=f'127.0.0.1:{p2p_port}',
-                genesis='/root/nodeos/genesis/local.json',
+                snapshot=f'/root/tmp/{snap_name}',
                 sig_provider=f'{cleos.keys[producer]}=KEY:{cleos.private_keys[producer]}',
                 producer_name=producer,
                 data_dir=f'/root/nodeos-{producer}/data',
                 paused=True,
-                not_shutdown_thresh_exeded=True)
+                not_shutdown_thresh_exeded=True,
+                **opt_params)
 
             api.wait_for_phrase_in_nodeos_logs('start listening for http requests')
 
@@ -208,7 +201,7 @@ def multi_node_chain():
         ec, _ = cleos.unlock_wallet()
         assert ec == 0
 
-        yield cleos, apis
+        cleos.wait_for_phrase_in_nodeos_logs('switching forks from')
 
     finally:
         eosio_container.stop()

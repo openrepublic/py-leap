@@ -14,11 +14,14 @@ from typing import (
     Optional,
     Iterator
 )
+from urllib3.util.retry import Retry
 from pathlib import Path
 from difflib import SequenceMatcher
 
 from docker.client import DockerClient
 from docker.models.containers import Container
+
+from requests.adapters import HTTPAdapter
 
 from .init import (
     sys_token_supply,
@@ -33,7 +36,8 @@ from .sugar import (
     Asset,
     Symbol,
     docker_open_process,
-    docker_wait_process
+    docker_wait_process,
+    docker_move_into
 )
 from .errors import ContractDeployError
 from .tokens import sys_token, ram_token
@@ -42,6 +46,18 @@ from .typing import (
     ExecutionStream,
     ActionResult
 )
+
+
+EOSIO_V = 'eosio-2.1.0'
+LEAP_V = 'leap-4.0.0'
+
+
+DEFAULT_NODEOS_REPO = 'guilledk/py-eosio'
+DEFAULT_NODEOS_IMAGE = LEAP_V
+
+
+def default_nodeos_image():
+    return f'{DEFAULT_NODEOS_REPO}:{DEFAULT_NODEOS_IMAGE}'
 
 
 class CLEOS:
@@ -63,12 +79,32 @@ class CLEOS:
             self.logger = logging.getLogger('cleos')
         else:
             self.logger = logger
-        
+
         self.endpoint = url
         self.remote_endpoint = remote
 
+        self.keys = {}
+        self.private_keys = {}
+
         self._sys_token_init = False
-    
+
+        self._session = requests.Session()
+        retry = Retry(
+            total=5,
+            read=5,
+            connect=10,
+            backoff_factor=0.1,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self._session.mount('http://', adapter)
+        self._session.mount('https://', adapter)
+
+    def _get(self, *args, **kwargs):
+        return self._session.get(*args, **kwargs)
+
+    def _post(self, *args, **kwargs):
+        return self._session.post(*args, **kwargs)
+
     def run(
         self,
         cmd: List[str],
@@ -92,7 +128,12 @@ class CLEOS:
         """
 
         # stringify command
-        cmd = [str(chunk) for chunk in cmd]
+        cmd = [
+            json.dumps(chunk)
+            if isinstance(chunk, Dict) or isinstance(chunk, List)
+            else str(chunk)
+            for chunk in cmd
+        ]
 
         self.logger.info(f'exec run: {cmd}')
         for i in range(1, 2 + retry):
@@ -102,12 +143,14 @@ class CLEOS:
                 break
 
             self.logger.warning(f'cmd run retry num {i}...')
-               
+
+        out = out.decode('utf-8')
+
         if ec != 0:
             self.logger.error('command exited with non zero status:')
-            self.logger.error(out.decode('utf-8'))
+            self.logger.error(out)
 
-        return ec, out.decode('utf-8')
+        return ec, out
 
     def open_process(
         self,
@@ -128,6 +171,8 @@ class CLEOS:
             be consumed.
         :rtype: :ref:`typing_exe_stream`
         """
+        # stringify command
+        cmd = [str(chunk) for chunk in cmd]
         return docker_open_process(self.client, self.vtestnet, cmd, **kwargs)
 
     def wait_process(
@@ -153,10 +198,18 @@ class CLEOS:
         self.__keosd_exec_id = exec_id
         self.__keosd_exec_stream = exec_stream
 
+        self.logger.info('Streaming keosd...')
+
         for msg in exec_stream:
             msg = msg.decode('utf-8')
+            self.logger.info(msg.rstrip())
             if 'add api url: /v1/node/get_supported_apis' in msg:
                 break
+
+    def stream_keosd(self):
+        assert self.is_keosd_running()
+        for msg in self.__keosd_exec_stream:
+            yield msg.decode('utf-8')
 
     def start_nodeos(
         self,
@@ -164,29 +217,64 @@ class CLEOS:
             'producer_plugin',
             'producer_api_plugin',
             'chain_api_plugin',
-            'http_plugin',
-            'history_plugin',
-            'history_api_plugin'
+            'net_plugin',
+            'net_api_plugin',
+            'http_plugin'
         ],
         http_addr: str = '0.0.0.0:8888',
-        p2p_addr: str = '0.0.0.0:9876'
+        p2p_addr: str = '0.0.0.0:9876',
+        hist_addr: Optional[str] = None,
+        genesis: Optional[str] = None,
+        snapshot: Optional[str] = None,
+        sig_provider: str = 'EOS6MRyAjQq8ud7hVNYcfnVPJqcVpscN5So8BhtHuGYqET5GDW5CV=KEY:5KQwrPbwdL6PhXujxW37FSSQZ1JiwsST4cqQzDeyXtP79zkvFD3',
+        producer_name: str = 'eosio',
+        data_dir: str = '/root/nodeos/data',
+        peers: List[str] = [],
+        paused: bool = False,
+        not_shutdown_thresh_exeded: bool = False,
+        extra_params: List[str] = []
     ):
-        exec_id, exec_stream = self.open_process(
-            ['nodeos',
-                '-e',
-                '-p', 'eosio',
-                *[f'--plugin={p}' for p in plugins],
-                f'--http-server-address=\'{http_addr}\'',
-                f'--p2p-listen-endpoint=\'{p2p_addr}\'',
-                '--abi-serializer-max-time-ms=999999',
-                '--filter-on=\'*\'',
-                '--access-control-allow-origin=\'*\'',
-                '--contracts-console',
-                '--http-validate-host=false',
-                '--verbose-http-errors'
-        ])
+        cmd = [
+            'nodeos',
+            '-e',
+            '-p', producer_name,
+            *[f'--plugin=eosio::{p}' for p in plugins],
+            f'--http-server-address={http_addr}',
+            f'--p2p-listen-endpoint={p2p_addr}',
+            '--abi-serializer-max-time-ms=999999',
+            '--access-control-allow-origin=\"*\"',
+            '--contracts-console',
+            '--http-validate-host=false',
+            '--verbose-http-errors',
+            f'--data-dir={data_dir}',
+            f'--signature-provider={sig_provider}',
+            *[f'--p2p-peer-address={peer}' for peer in peers]]
+
+        if paused:
+            cmd += ['-x']
+
+        if snapshot:
+            cmd += [f'--snapshot={snapshot}']
+
+        if genesis:
+            cmd += [f'--genesis-json={genesis}']
+
+        if not_shutdown_thresh_exeded:
+            cmd += ['--resource-monitor-not-shutdown-on-threshold-exceeded']
+
+        if 'state_history_plugin' in plugins:
+            # https://github.com/EOSIO/eos/issues/6334
+            assert hist_addr
+            cmd += [f'--state-history-endpoint={hist_addr}']
+            cmd += ['--disable-replay-opts']
+
+        cmd += extra_params
+
+        exec_id, exec_stream = self.open_process(cmd)
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
+
+        self._nodeos_exec_stream = exec_stream
 
     def start_nodeos_from_config(
         self,
@@ -196,14 +284,18 @@ class CLEOS:
         data_dir: str = '/mnt/dev/data',
         snapshot: Optional[str] = None,
         logging_cfg: Optional[str] = None,
-        logfile: Optional[str] = '/root/nodeos.log'
+        logfile: Optional[str] = '/root/nodeos.log',
+        is_local: bool = True,
+        not_shutdown_thresh_exeded: bool = False,
+        extra_params: List[str] = []
     ):
         cmd = [
             'nodeos',
             '-e',
             '-p', 'eosio',
             f'--data-dir={data_dir}',
-            f'--config={config}' 
+            f'--config={config}',
+            *extra_params
         ]
         if state_plugin:
             # https://github.com/EOSIO/eos/issues/6334
@@ -218,8 +310,12 @@ class CLEOS:
         if logging_cfg:
             cmd += [f'--logconf={logging_cfg}']
 
+        if not_shutdown_thresh_exeded:
+            cmd += ['--resource-monitor-not-shutdown-on-threshold-exceeded']
+
         if logfile:
             cmd += [f'> {logfile} 2>&1'] 
+
 
         final_cmd = ['/bin/bash', '-c', ' '.join(cmd)]
 
@@ -227,6 +323,23 @@ class CLEOS:
         exec_id, exec_stream = self.open_process(final_cmd)
         self.__nodeos_exec_id = exec_id
         self.__nodeos_exec_stream = exec_stream
+
+        if is_local:
+            return self.wait_produced(from_file=logfile)
+        else:
+            return self.wait_received(from_file=logfile)
+
+    def stop_nodeos(self, from_file: Optional[str] = None):
+        # gracefull nodeos exit
+        proc_inf = self.open_process(['pkill', 'nodeos'])
+
+        ec, out = self.wait_process(*proc_inf)
+        self.logger.info(f'pkill nodeos: {ec}')
+        self.logger.info('await gracefull nodeos exit...')
+
+        self.wait_stopped(from_file=from_file, timeout=120)
+
+        self.logger.info('nodeos exit.')
 
     def gather_nodeos_output(self) -> str:
         return self.wait_process(
@@ -248,43 +361,37 @@ class CLEOS:
         return self.client.api.exec_inspect(
             self.__keosd_exec_id)['Running']
 
-    def wait_produced(self, from_file: Optional[str] = None):
+    def wait_for_phrase_in_nodeos_logs(
+        self,
+        phrase: str,
+        lines: int = 100,
+        timeout: int = 60,
+        from_file: Optional[str] = None
+    ):
         if from_file:
-            exec_id, exec_stream = docker_open_process(
-                    self.client, self.vtestnet,
-                    ['/bin/bash', '-c',
-                    f'tail -f {from_file}'])
+            exec_id, exec_stream = self.open_process(
+                ['/bin/bash', '-c', f'timeout {timeout}s tail -n {lines} -f {from_file}'])
         else:
-            exec_stream = self.vtestnet.logs(stream=True)
-        
+            exec_stream = self.__nodeos_exec_stream
+
         out = ''
         for chunk in exec_stream:
             msg = chunk.decode('utf-8')
             out += msg
             self.logger.info(msg.rstrip())
-            if 'Produced' in msg:
+            if phrase in msg:
                 break
 
         return out
 
-    def wait_received(self, from_file: Optional[str] = None):
-        if from_file:
-            exec_id, exec_stream = docker_open_process(
-                    self.client, self.vtestnet,
-                    ['/bin/bash', '-c',
-                    f'tail -f {from_file}'])
-        else:
-            exec_stream = self.vtestnet.logs(stream=True)
-        
-        out = ''
-        for chunk in exec_stream:
-            msg = chunk.decode('utf-8')
-            out += msg
-            self.logger.info(msg.rstrip())
-            if 'Received' in msg:
-                break
+    def wait_stopped(self, **kwargs):
+        return self.wait_for_phrase_in_nodeos_logs('nodeos successfully exiting', **kwargs)
 
-        return out
+    def wait_produced(self, **kwargs):
+        return self.wait_for_phrase_in_nodeos_logs('Produced', **kwargs)
+
+    def wait_received(self, **kwargs):
+        return self.wait_for_phrase_in_nodeos_logs('Received', **kwargs)
 
     def deploy_contract(
         self,
@@ -294,9 +401,10 @@ class CLEOS:
         account_name: Optional[str] = None,
         create_account: bool = True,
         staked: bool = True,
-        verify_hash: bool = True
+        verify_hash: bool = True,
+        debug: bool = False
     ):
-        """Deploy a built contract.
+        """Deploy a built contract inside the container.
 
         :param contract_name: Name of contract wasm file. 
         :param build_dir: Path to the directory the wasm and abi files are
@@ -308,9 +416,11 @@ class CLEOS:
         :param account_name: Name of the target account of the deployment.
         :param create_account: ``True`` if target account should be created.
         :param staked: ``True`` if this account should use RAM & NET resources.
+        :param verify_hash: Query remote node for ``contract_name`` and compare
+            hashes.
         """
         self.logger.info(f'contract {contract_name}:')
-        
+
         account_name = contract_name if not account_name else account_name
 
         if create_account:
@@ -373,32 +483,38 @@ class CLEOS:
                 retry=0
             )
             assert ec == 0
-            
+
             local_shasum = out.split(' ')[0]
             self.logger.info(f'local sum: {local_shasum}')
-    
+
             self.logger.info(f'asking remote {self.remote_endpoint}...')
-            resp = requests.post(
+            resp = self._post(
                 f'{self.remote_endpoint}/v1/chain/get_code',
                 json={
                     'account_name': account_name,
                     'code_as_wasm': 1
                 }).json()
 
-            remote_shasum = resp['code_hash']
-            self.logger.info(f'remote sum: {remote_shasum}')
+            if 'code_hash' not in resp:
+                self.logger.warning('couldn\'t perform hash check remote response:')
+                self.logger.warning(json.dumps(resp, indent=4))
 
-            if local_shasum != remote_shasum:
-                raise ContractDeployError(
-                    f'Local contract hash doesn\'t match remote:\n'
-                    f'local: {local_shasum}\n'
-                    f'remote: {remote_shasum}')
+            else:
+
+                remote_shasum = resp['code_hash']
+                self.logger.info(f'remote sum: {remote_shasum}')
+
+                if local_shasum != remote_shasum:
+                    raise ContractDeployError(
+                        f'Local contract hash doesn\'t match remote:\n'
+                        f'local: {local_shasum}\n'
+                        f'remote: {remote_shasum}')
 
         self.logger.info('deploy...')
         self.logger.info(f'wasm path: {wasm_path}')
         self.logger.info(f'wasm: {wasm_file}')
         self.logger.info(f'abi: {abi_file}')
-        
+
         cmd = [
             'cleos',
             '--url', self.url,
@@ -406,40 +522,143 @@ class CLEOS:
             str(wasm_path.parent),
             wasm_file,
             abi_file,
-            '-p', f'{account_name}@active'
+            '-p', f'{account_name}@active', '-j'
         ]
-        
+
+        if debug:
+            cmd = cmd[:1] + ['--print-response'] + cmd[1:]
+
         self.logger.info('contract deploy: ')
         ec, out = self.run(cmd, retry=6)
-        self.logger.info(out)
+
+        if debug:
+            self.logger.info(out)
 
         if ec == 0:
             self.logger.info('deployed')
 
+            # chop first two lines and return as json dict
+            return json.loads(out.split('\n', 2)[2])
+
         else:
             raise ContractDeployError(f'Couldn\'t deploy {account_name} contract.')
 
+    def deploy_contract_from_host(
+        self,
+        contract_name: str,
+        build_dir: str,
+        privileged: bool = False,
+        account_name: Optional[str] = None,
+        create_account: bool = True,
+        staked: bool = True,
+        verify_hash: bool = True
+    ):
+        """Deploy a built contract from outside container.
 
-    def clone_node_activations(self, target_url: str):
-        r = requests.post(
-            f'{target_url}/v1/chain/get_activated_protocol_features',
-            json={}
+        :param contract_name: Name of contract wasm file. 
+        :param build_dir: Path to the directory the wasm and abi files are
+            located. Fuzzy searches all subdirectories for the .wasm and then
+            picks the one most similar to ``contract_name``, asumes .abi has
+            the same name and is in same directory.
+        :param privileged: ``True`` if contract should be privileged (system
+            contracts).
+        :param account_name: Name of the target account of the deployment.
+        :param create_account: ``True`` if target account should be created.
+        :param staked: ``True`` if this account should use RAM & NET resources.
+        :param verify_hash: Query remote node for ``contract_name`` and compare
+            hashes.
+        """
+        ec, out = self.run(
+            ['mkdir', '-p', '/tmp/host_contracts'])
+        assert ec == 0
+
+        dir_name = Path(build_dir).name
+
+        docker_move_into(
+            self.client,
+            self.vtestnet,
+            build_dir,
+            f'/tmp/host_contracts')
+
+        return self.deploy_contract(
+            contract_name,
+            f'/tmp/host_contracts/{build_dir}',
+            privileged=privileged,
+            account_name=account_name,
+            create_account=create_account,
+            staked=staked,
+            verify_hash=verify_hash
         )
-        resp = r.json()
-        assert 'activated_protocol_features' in resp
-        features = resp['activated_protocol_features']
+
+    def create_snapshot(self, target_url: str):
+        resp = self._post(
+            f'http://{target_url}/v1/producer/create_snapshot'
+        )
+        assert resp.status_code >= 200 and resp.status_code <= 299
+        return resp.json()
+
+    def get_node_activations(self, target_url: str) -> List[Dict]:
+        lower_bound = 0
+        step = 250
+        more = True
+        features = []
+        while more:
+            r = self._post(
+                f'{target_url}/v1/chain/get_activated_protocol_features',
+                json={
+                    'limit': step,
+                    'lower_bound': lower_bound,
+                    'upper_bound': lower_bound + step
+                }
+            )
+            resp = r.json()
+
+            assert 'activated_protocol_features' in resp
+            features += resp['activated_protocol_features']
+            lower_bound += step
+            more = 'more' in resp
 
         # sort in order of activation
         features = sorted(features, key=lambda f: f['activation_ordinal'])
         features.pop(0)  # remove PREACTIVATE_FEATURE
- 
+
+        return features
+
+    def clone_node_activations(self, target_url: str):
+        features = self.get_node_activations(target_url)
+
+        feature_names = [
+            feat['specification'][0]['value']
+            for feat in features
+        ]
+
+        self.logger.info('activating features:')
+        self.logger.info(
+            json.dumps(feature_names, indent=4))
+
         for f in features:
             self.activate_feature_with_digest(f['feature_digest'])
+
+    def diff_protocol_activations(self, target_one: str, target_two: str):
+        features_one = self.get_node_activations(target_one)
+        features_two = self.get_node_activations(target_two)
+
+        features_one_names = [
+            feat['specification'][0]['value']
+            for feat in features_one
+        ]
+        features_two_names = [
+            feat['specification'][0]['value']
+            for feat in features_two
+        ]
+
+        return list(set(features_one_names) - set(features_two_names))
 
     def boot_sequence(
         self,
         activations_node: Optional[str] = None,
-        sys_contracts_mount='/root/nodeos/contracts'
+        sys_contracts_mount='/root/nodeos/contracts',
+        verify_hash: bool = False 
     ):
         """Perform enterprise operating system bios sequence acording to:
 
@@ -448,7 +667,7 @@ class CLEOS:
         This includes:
 
             1) Creating the following accounts:
-            
+
                 - ``eosio.bpay``
                 - ``eosio.names``
                 - ``eosio.ram``
@@ -479,7 +698,13 @@ class CLEOS:
             'eosio.saving',
             'eosio.stake',
             'eosio.vpay',
-            'eosio.rex'
+            # 'eosio.null',
+            'eosio.rex',
+
+            # custom telos
+            'eosio.tedp',
+            'works.decide',
+            'amend.decide'
         ]:
             ec, _ = self.create_account('eosio', name)
             assert ec == 0 
@@ -487,31 +712,37 @@ class CLEOS:
         self.deploy_contract(
             'eosio.token',
             f'{sys_contracts_mount}/eosio.token',
-            staked=False
+            staked=False,
+            verify_hash=verify_hash
         )
 
         self.deploy_contract(
             'eosio.msig',
             f'{sys_contracts_mount}/eosio.msig',
-            staked=False
+            staked=False,
+            verify_hash=verify_hash
         )
 
         self.deploy_contract(
             'eosio.wrap',
             f'{sys_contracts_mount}/eosio.wrap',
-            staked=False
+            staked=False,
+            verify_hash=verify_hash
         )
 
         self.init_sys_token()
 
         self.activate_feature_v1('PREACTIVATE_FEATURE')
 
-        self.deploy_contract(
+        self.sys_deploy_info = self.deploy_contract(
             'eosio.system',
             f'{sys_contracts_mount}/eosio.system',
             account_name='eosio',
-            create_account=False
+            create_account=False,
+            verify_hash=verify_hash
         )
+
+        self.wait_blocks(3)
 
         if not activations_node:
             activations_node = self.remote_endpoint
@@ -521,6 +752,13 @@ class CLEOS:
         ec, _ = self.push_action(
             'eosio', 'setpriv',
             ['eosio.msig', 1],
+            'eosio@active'
+        )
+        assert ec == 0
+
+        ec, _ = self.push_action(
+            'eosio', 'setpriv',
+            ['eosio.wrap', 1],
             'eosio@active'
         )
         assert ec == 0
@@ -538,6 +776,51 @@ class CLEOS:
             'eosio@active'
         )
         assert ec == 0
+
+        # Telos specific
+
+        self.create_account_staked(
+            'eosio', 'telos.decide', ram=2700000)
+
+        self.deploy_contract(
+            'telos.decide',
+            f'{sys_contracts_mount}/telos.decide',
+            create_account=False,
+            verify_hash=verify_hash
+        )
+
+        for name in ['exrsrv.tf']:
+            self.create_account_staked('eosio', name)
+
+    # Producer API
+
+    def is_block_production_paused(self):
+        return self._post(
+            f'{self.url}/v1/producer/paused').json()
+
+    def resume_block_production(self):
+        return self._post(
+            f'{self.url}/v1/producer/resume').json()
+
+    def pause_block_production(self):
+        return self._post(
+            f'{self.url}/v1/producer/pause').json()
+
+    # Net API
+
+    def connected_nodes(self):
+        return self._post(
+            f'{self.url}/v1/net/connections').json()
+
+    def connect_node(self, endpoint: str):
+        return self._post(
+            f'{self.url}/v1/net/connect',
+            json=endpoint).json()
+
+    def disconnect_node(self, endpoint: str):
+        return self._post(
+            f'{self.url}/v1/net/disconnect',
+            json=endpoint).json()
 
     def create_key_pair(self) -> Tuple[str, str]:
         """Generate a new EOSIO key pair.
@@ -586,6 +869,7 @@ class CLEOS:
         self.logger.info(out)
         assert ec == 0
         self.logger.info('key imported')
+        return out.split(':')[1][1:].rstrip()
 
     def import_keys(self, private_keys: List[str]):
         """Import a list of private keys into wallet inside testnet container.
@@ -613,9 +897,9 @@ class CLEOS:
         # Step 1: Create a Wallet
         self.logger.info('create wallet...')
         ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'create', '--to-console'])
-        wallet_key = out.split('\n')[-2].strip('\"')
+        self.wallet_key = out.split('\n')[-2].strip('\"')
         assert ec == 0
-        assert len(wallet_key) == 53
+        assert len(self.wallet_key) == 53
         self.logger.info('wallet created')
 
         # Step 2: Open the Wallet
@@ -630,7 +914,7 @@ class CLEOS:
         # Step 3: Unlock it
         self.logger.info('unlock wallet...')
         ec, out = self.run(
-            ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', wallet_key]
+            ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', self.wallet_key]
         )
         assert ec == 0
 
@@ -651,16 +935,26 @@ class CLEOS:
 
         # Step 5: Import the Development Key
         self.logger.info('import development key...')
-        self.import_key(dev_key)
+        self.keys['eosio'] = self.import_key(dev_key)
+        self.private_keys['eosio'] = dev_key
         self.logger.info('imported dev key')
 
     def list_keys(self):
         return self.run(
             ['cleos', 'wallet', 'list'])
 
+    def list_all_keys(self):
+        return self.run(
+            ['cleos', 'wallet', 'private_keys', f'--password={self.wallet_key}'])
+
+    def unlock_wallet(self):
+        return self.run(
+            ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', self.wallet_key]
+        )
+
     def get_feature_digest(self, feature_name: str) -> str:
         """Given a feature name, query the v1 API endpoint: 
-        
+
             ``/v1/producer/get_supported_protocol_features``
 
         to retrieve hash digest.
@@ -668,7 +962,7 @@ class CLEOS:
         :return: Feature hash digest.
         :rtype: str
         """
-        r = requests.post(
+        r = self._post(
             f'{self.endpoint}/v1/producer/get_supported_protocol_features',
             json={}
         )
@@ -691,13 +985,13 @@ class CLEOS:
 
         digest = self.get_feature_digest(feature_name)
         self.logger.info(f'activating {feature_name}...')
-        r = requests.post(
+        r = self._post(
             f'{self.endpoint}/v1/producer/schedule_protocol_feature_activations',
             json={
                 'protocol_features_to_activate': [digest]
             }
         ).json()
-        
+
         self.logger.info(json.dumps(r, indent=4))
 
         assert 'result' in r
@@ -735,13 +1029,37 @@ class CLEOS:
 
         return Asset((quote / base) * 1024 / 0.995, Symbol('TLOS', 4)) 
 
+    def sign_transaction(
+        self,
+        key: str,
+        tx: Dict,
+        push: bool = False 
+    ):
+        chain_id = self.get_info()['chain_id']
+        if push:
+            push = ['--push-transaction']
+        else:
+            push = []
+        ec, out = self.run(
+            ['cleos', 'sign', '--public-key', key, '-c', chain_id, tx] + push)
+        try:
+            out = json.loads(out)
+
+        except (json.JSONDecodeError, TypeError):
+            ...
+
+        return ec, out
+
+
     def push_action(
         self,
         contract: str,
         action: str,
         args: List[str],
         permissions: str,
-        retry: int = 3
+        retry: int = 3,
+        dump_tx: bool = False,
+        sign: bool = True
     ) -> ActionResult:
         """Execute an action defined in a given contract, in case of failure retry.
 
@@ -766,19 +1084,60 @@ class CLEOS:
             else arg
             for arg in args
         ]
-        self.logger.info(f"push action: {action}({args}) as {permissions}")
         cmd = [
             'cleos', '--url', self.url, 'push', 'action', contract, action,
             json.dumps(args), '-p', permissions, '-j', '-f'
         ]
+        if dump_tx:
+            cmd += ['-d']
+
+        if not sign:
+            cmd += ['-s']
+
+        if DEFAULT_NODEOS_IMAGE == LEAP_V:
+            cmd += ['--use-old-rpc', '-t', 'false']
+
+        ec, out = self.run(cmd, retry=retry)
+
+        if 'ABI for contract eosio.null not found. Action data will be shown in hex only.' in out:
+            out = '\n'.join(out.split('\n')[1:])
+
+        try:
+            out = json.loads(out)
+
+        except (json.JSONDecodeError, TypeError):
+            ...
+
+        return ec, out
+
+    def push_transaction(
+        self,
+        trx: Dict, 
+        retry: int = 3,
+        dump_tx: bool = False
+    ) -> ActionResult:
+        """Execute a transaction, in case of failure retry.
+
+        :param trx: JSON transaction.
+        :param retry: Max amount of retries allowed, can be zero for no retries.
+
+        :return: Always returns a tuple with the exit code at the beggining and
+            depending if the transaction was exectued, either the resulting json dict,
+            or the full output including errors as a string at the end.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        self.logger.info(f"push transaction: {json.dumps(trx, indent=4)}")
+        cmd = [
+            'cleos', '--url', self.url, 'push', 'transaction', 
+            json.dumps(trx), '-j', '-f'
+        ]
         ec, out = self.run(cmd, retry=retry)
         try:
             out = json.loads(out)
-            self.logger.info(collect_stdout(out))
-            
+
         except (json.JSONDecodeError, TypeError):
-            self.logger.error(f'\n{out}')
-            self.logger.error(f'cmd line: {cmd}')
+            ...
 
         return ec, out
 
@@ -808,7 +1167,7 @@ class CLEOS:
 
         :param actions: A tuple of four iterators, each iterator when consumed
             produces one of the following attriubutes:
-                
+
             ``contract name``, ``action name``, ``arguments list`` and ``permissions``
 
         :return: A list the results for each action execution.
@@ -842,9 +1201,14 @@ class CLEOS:
         """
 
         if not key:
-            key = self.dev_wallet_pkey
+            priv, pub = self.create_key_pair()
+            self.import_key(priv)
+            key = pub
+            self.private_keys[name] = priv
+
         ec, out = self.run(['cleos', '--url', self.url, 'create', 'account', owner, name, key])
         assert ec == 0
+        self.keys[name] = key
         self.logger.info(f'created account: {name}')
         return ec, out
 
@@ -854,7 +1218,7 @@ class CLEOS:
         name: str,
         net: str = '10.0000 TLOS',
         cpu: str = '10.0000 TLOS',
-        ram: int = 81920,
+        ram: int = 181920,
         key: Optional[str] = None
     ) -> ExecutionResult:
         """Create a staked eosio account.
@@ -872,8 +1236,11 @@ class CLEOS:
         :return: Exitcode and output.
         :rtype: :ref:`typing_exe_result`
         """
-        if key is None:
-            key = self.dev_wallet_pkey
+        if not key:
+            priv, pub = self.create_key_pair()
+            self.import_key(priv)
+            key = pub
+            self.private_keys[name] = priv
 
         ec, out = self.run([
             'cleos', '--url', self.url,
@@ -887,6 +1254,7 @@ class CLEOS:
             '--buy-ram-bytes', ram
         ])
         assert ec == 0
+        self.keys[name] = key
         self.logger.info(f'created staked account: {name}')
         return ec, out
 
@@ -897,7 +1265,7 @@ class CLEOS:
         keys: List[str],
         net: str = '10.0000 TLOS',
         cpu: str = '10.0000 TLOS',
-        ram: int = 8192
+        ram: int = 181920
     ) -> List[ExecutionResult]:
         """Same as :func:`~pytest_eosio.EOSIOTestSession.create_account_staked`,
         but takes lists of names and keys, to create the accounts in parallel,
@@ -937,6 +1305,8 @@ class CLEOS:
         ]
         for ec, _ in results:
             assert ec == 0
+        for name, key in zip(names, keys):
+            self.keys[name] = key
         self.logger.info(f'created {len(names)} staked accounts.')
 
     def get_table(
@@ -944,7 +1314,7 @@ class CLEOS:
         account: str,
         scope: str,
         table: str,
-        *args
+        **kwargs
     ) -> List[Dict]:
         """Get table rows from the blockchain.
 
@@ -961,21 +1331,26 @@ class CLEOS:
 
         done = False
         rows = []
+        params = {
+            'code': account,
+            'scope': scope,
+            'table': table,
+            'json': True,
+            **kwargs
+        }
         while not done:
-            ec, out = self.run([
-                'cleos', '--url', self.url, 'get', 'table',
-                account, scope, table,
-                '-l', '1000', *args
-            ])
-            if ec != 0:
-                self.logger.critical(out)
+            resp = self._post(f'{self.url}/v1/chain/get_table_rows', json=params).json()
+            if 'code' in resp and resp['code'] != 200:
+                self.logger.critical(json.dumps(resp, indent=4))
+                assert False
 
-            assert ec == 0
-            out = json.loads(out)
-            rows.extend(out['rows']) 
-            done = not out['more']
+            self.logger.info(resp)
+            rows.extend(resp['rows'])
+            done = not resp['more']
+            if not done:
+                params['index_position'] = resp['next_key']
 
-        return rows 
+        return rows
 
     def get_info(self) -> Dict[str, Union[str, int]]:
         """Get blockchain statistics.
@@ -992,10 +1367,9 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: Dict[str, Union[str, int]]
         """
-
-        ec, out = self.run(['cleos', '--url', self.url, 'get', 'info'])
-        assert ec == 0
-        return json.loads(out)
+        resp = self._get(f'{self.url}/v1/chain/get_info')
+        assert resp.status_code == 200
+        return resp.json()
 
     def get_resources(self, account: str) -> List[Dict]:
         """Get account resources.
@@ -1008,7 +1382,12 @@ class CLEOS:
 
         return self.get_table('eosio', account, 'userres')
 
-    def new_account(self, name: Optional[str] = None, **kwargs) -> str:
+    def new_account(
+        self,
+        name: Optional[str] = None,
+        owner: str = 'eosio',
+        **kwargs
+    ) -> str:
         """Create a new account with a random key and name, import the private
         key into the wallet.
 
@@ -1028,7 +1407,7 @@ class CLEOS:
             self.import_key(private_key)
             kwargs['key'] = public_key
 
-        self.create_account_staked('eosio', account_name, **kwargs)
+        self.create_account_staked(owner, account_name, **kwargs)
         return account_name
 
     def new_accounts(self, n: int) -> List[str]:
@@ -1088,13 +1467,34 @@ class CLEOS:
                 return None
 
         # when waiting for nodeos to start
-        while (info := try_get_info()) == None:
+        info = try_get_info()
+        while info == None:
+            if not self.is_nodeos_running():
+                ec, out = self.gather_nodeos_output()
+                self.logger.error(out)
+                raise AssertionError(f'Nodeos crashed with exitcode {ec}')
             time.sleep(sleep_time)
-    
+            info = try_get_info()
+
         start = self.get_info()['head_block_num']
-        while (info := self.get_info())['head_block_num'] - start < n:
-            self.logger.info(f'block num: {info["head_block_num"]}')
+        current = start
+        end = start + n
+        while current < end:
+            self.logger.info(f'block num: {current}, remaining: {end - current}')
             time.sleep(sleep_time)
+            current = self.get_info()['head_block_num']
+
+        if hasattr(self, 'wallet_key'):
+            # ensure wallet is still unlocked after wait
+            ec, out = self.run(['cleos', '--url', self.url, 'wallet', 'list'])
+            assert ec == 0
+
+            if '*' not in out:
+                ec, out = self.run(
+                    ['cleos', '--url', self.url, 'wallet', 'unlock', '--password', self.wallet_key]
+                )
+                assert ec == 0
+
 
     """Multi signature
     """
@@ -1141,6 +1541,40 @@ class CLEOS:
             action_name,
             json.dumps(data),
             '-p', proposer
+        ]
+        ec, out = self.run(cmd)
+        assert ec == 0
+
+        return proposal_name
+
+    def multi_sig_propose_tx(
+        self,
+        proposer: str,
+        req_permissions: List[str],
+        tx: Dict 
+    ) -> str:
+        """Create a multi signature proposal with a random name.
+
+        :param proposer: Account to authorize the proposal.
+        :param req_permissions: List of permissions required to run proposed
+            transaction.
+        :param tx: Dictionary with transaction to execute with multi signature.
+
+        :return: New proposal name.
+        :rtype: str
+        """
+        proposal_name = random_eosio_name()
+        cmd = [
+            'cleos', '--url', self.url,
+            'multisig',
+            'propose_trx',
+            proposal_name,
+            json.dumps([
+                {'actor': perm[0], 'permission': perm[1]}
+                for perm in [p.split('@') for p in req_permissions]
+            ]),
+            tx,
+            '-p', f'{proposer}@active'
         ]
         ec, out = self.run(cmd)
         assert ec == 0
@@ -1206,6 +1640,10 @@ class CLEOS:
             proposal_name,
             '-p', permission
         ]
+
+        if DEFAULT_NODEOS_IMAGE == LEAP_V:
+            cmd += ['--use-old-rpc', '-t', 'false']
+
         ec, out = self.run(cmd)
 
         if ec == 0:
@@ -1249,7 +1687,7 @@ class CLEOS:
 
         :param sym: Token symbol.
         :param token_contract: Token contract.
-        
+
         :return: A dictionary with ``\'supply\'``, ``\'max_supply\'`` and
             ``\'issuer\'`` as keys.
         :rtype: Dict[str, str]
@@ -1267,7 +1705,7 @@ class CLEOS:
         token_contract: str = 'eosio.token'
     ) -> Optional[str]:
         """Get account balance.
-        
+
         :param account: Account to query.
         :param token_contract: Token contract.
 
@@ -1283,14 +1721,19 @@ class CLEOS:
         )
         if len(balances) == 1:
             return balances[0]['balance']
+
+        elif len(balances) > 1:
+            return balances
+
         else:
-            return None
+            return None 
 
     def create_token(
         self,
         issuer: str,
         max_supply: Union[str, Asset],
-        token_contract: str = 'eosio.token'
+        token_contract: str = 'eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Create a new token issued by ``issuer``.
 
@@ -1306,7 +1749,8 @@ class CLEOS:
             token_contract,
             'create',
             [issuer, str(max_supply)],
-            'eosio.token'
+            'eosio.token',
+            **kwargs
         )
 
     def issue_token(
@@ -1314,7 +1758,8 @@ class CLEOS:
         issuer: str,
         quantity: Union[str, Asset],
         memo: str,
-        token_contract: str = 'eosio.token'
+        token_contract: str = 'eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Issue a specific quantity of tokens.
 
@@ -1331,7 +1776,8 @@ class CLEOS:
             token_contract,
             'issue',
             [issuer, str(quantity), memo],
-            f'{issuer}@active'
+            f'{issuer}@active',
+            **kwargs
         )
 
     def transfer_token(
@@ -1340,7 +1786,8 @@ class CLEOS:
         _to: str,
         quantity: Union[str, Asset],
         memo: str = '',
-        token_contract: str = 'eosio.token'
+        token_contract: str = 'eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Transfer tokens.
 
@@ -1358,7 +1805,8 @@ class CLEOS:
             token_contract,
             'transfer',
             [_from, _to, str(quantity), memo],
-            f'{_from}@active'
+            f'{_from}@active',
+            **kwargs
         )
 
     def give_token(
@@ -1366,7 +1814,8 @@ class CLEOS:
         _to: str,
         quantity: Union[str, Asset],
         memo: str = '',
-        token_contract='eosio.token'
+        token_contract='eosio.token',
+        **kwargs
     ) -> ActionResult:
         """Transfer tokens from token contract to an account.
 
@@ -1379,12 +1828,94 @@ class CLEOS:
         :rtype: :ref:`typing_action_result`
         """
         return self.transfer_token(
-            token_contract,
+            'eosio',
             _to,
             str(quantity),
             memo,
-            token_contract=token_contract
+            token_contract=token_contract,
+            **kwargs
         )
+
+    def retire_token(
+        self,
+        issuer: str,
+        quantity: Union[str, Asset],
+        memo: str = '',
+        token_contract: str = 'eosio.token',
+        **kwargs
+    ) -> ActionResult:
+        """Retire tokens.
+
+        :param issuer: Account that retires the tokens.
+        :param quantity: Quantity of tokens to retire in asset form.
+        :param memo: Memo string to attach to transaction.
+        :param token_contract: Token contract.
+
+        :return: ``token_contract.retire`` execution result.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        return self.push_action(
+            token_contract,
+            'retire',
+            [str(quantity), memo],
+            f'{issuer}@active',
+            **kwargs
+        )
+
+    def open_token(
+        self,
+        owner: str,
+        sym: Union[str, Symbol],
+        ram_payer: str,
+        token_contract: str = 'eosio.token',
+        **kwargs
+    ) -> ActionResult:
+        """Allows `ram_payer` to create an account `owner` with zero balance for
+        token `sym` at the expense of `ram_payer`.
+
+        :param owner: the account to be created,
+        :param sym: the token to be payed with by `ram_payer`,
+        :param ram_payer: the account that supports the cost of this action.
+        :param token_contract: Token contract.
+
+        :return: ``token_contract.open`` execution result.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        return self.push_action(
+            token_contract,
+            'open',
+            [owner, sym, ram_payer],
+            f'{ram_payer}@active',
+            **kwargs
+        )
+
+    def close_token(
+        self,
+        owner: str,
+        sym: Union[str, Symbol],
+        token_contract: str = 'eosio.token',
+        **kwargs
+    ) -> ActionResult:
+        """This action is the opposite for open, it closes the account `owner`
+        for token `sym`.
+
+        :param owner: the owner account to execute the close action for,
+        :param symbol: the symbol of the token to execute the close action for.
+
+        :return: ``token_contract.close`` execution result.
+        :rtype: :ref:`typing_action_result`
+        """
+
+        return self.push_action(
+            token_contract,
+            'close',
+            [owner, sym],
+            f'{owner}@active',
+            **kwargs
+        )
+
 
     def init_sys_token(self):
         """Initialize ``SYS`` token.
@@ -1399,3 +1930,121 @@ class CLEOS:
             ec, _ = self.issue_token('eosio', sys_token_init_issue, __name__)
             assert ec == 0
 
+    def get_global_state(self):
+        return self.get_table(
+            'eosio', 'eosio', 'global')[0]
+
+    def rex_deposit(self, owner: str, quantity: str):
+        return self.push_action(
+            'eosio',
+            'deposit',
+            [owner, quantity],
+            f'{owner}@active'
+        )
+
+    def rex_buy(self, _from: str, quantity: str):
+        return self.push_action(
+            'eosio',
+            'buyrex',
+            [_from, quantity],
+            f'{_from}@active'
+        )
+
+    def delegate_bandwidth(
+        self,
+        _from: str,
+        _to: str,
+        net: str,
+        cpu: str
+    ):
+        return self.push_action(
+            'eosio',
+            'delegatebw',
+            [_from, _to, net, cpu, 0],
+            f'{_from}@active'
+        )
+
+    def register_producer(
+        self,
+        producer: str,
+        url: str = '',
+        location: int = 0
+    ):
+        return self.push_action(
+            'eosio',
+            'regproducer',
+            [producer, self.keys[producer], url, location],
+            f'{producer}@active'
+        )
+
+    def vote_producers(
+        self, 
+        voter: str,
+        proxy: str,
+        producers: List[str]
+    ):
+        return self.push_action(
+            'eosio',
+            'voteproducer',
+            [voter, proxy, producers],
+            f'{voter}@active'
+        )
+
+    def claim_rewards(self, owner: str):
+        return self.push_action(
+            'eosio',
+            'claimrewards',
+            [owner],
+            f'{owner}@active'
+        )
+
+    def get_schedule(self):
+        ec, out = self.run([
+            'cleos', '--url', self.url, 'get', 'schedule', '-j'])
+
+        if ec == 0:
+            return json.loads(out) 
+        else:
+            return None
+
+    def get_producers(self):
+        return self.get_table(
+            'eosio',
+            'eosio',
+            'producers'
+        )
+
+    def get_producer(self, producer: str) -> Optional[Dict]:
+        rows = self.get_table(
+            'eosio', 'eosio', 'producers',
+            '--key-type', 'name', '--index', '1',
+            '--lower', producer,
+            '--upper', producer)
+
+        if len(rows) == 0:
+            return None
+        else:
+            return rows[0]
+
+    def get_payrate(self, producer: str) -> Optional[Dict]:
+        rows = self.get_table(
+            'eosio', 'eosio', 'payrate')
+
+        if len(rows) == 0:
+            return None
+        else:
+            return rows[0]
+
+    def wrap_exec(
+        self,
+        executer: str,
+        tx: Dict,
+        **kwargs
+    ):
+        return self.push_action(
+            'eosio.wrap',
+            'exec',
+            [executer, tx],
+            f'{executer}@active',
+            **kwargs
+        )
