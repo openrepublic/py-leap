@@ -4,11 +4,11 @@ from setuptools import setup
 
 
 setup(
-	name='py-eosio',
+	name='py-leap',
 	version='0.1a9',
 	author='Guillermo Rodriguez',
 	author_email='guillermor@fing.edu.uy',
-	packages=['py_eosio'],
+	packages=['leap'],
 	install_requires=[
         'docker',
 		'pytest',

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from py_eosio.sugar import random_token_symbol, string_to_name
+from leap.sugar import random_token_symbol, string_to_name
 
 
 def test_multi_sig_contract(msig_contract):

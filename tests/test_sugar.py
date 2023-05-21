@@ -4,7 +4,7 @@ import tempfile
 
 from pathlib import Path
 
-from py_eosio.sugar import *
+from leap.sugar import *
 
 
 def test_docker_move_file(cleos):

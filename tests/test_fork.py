@@ -6,8 +6,8 @@ from pathlib import Path
 
 import docker
 
-from py_eosio.cleos import CLEOS, default_nodeos_image
-from py_eosio.sugar import (
+from leap.cleos import CLEOS, default_nodeos_image
+from leap.sugar import (
     get_container,
     docker_move_out,
     docker_move_into

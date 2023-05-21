@@ -26,7 +26,7 @@ from docker.models.containers import Container
 from .typing import ExecutionStream, ExecutionResult
 
 
-EOSIO_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
+LEAP_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
 
 
 def string_to_sym_code(sym):
@@ -101,18 +101,18 @@ def asset_from_ints(amount: int, precision: int, sym: str):
     return f'{result[:-precision]}.{result[-precision:]} {sym}'
 
 
-def eosio_format_date(date: datetime) -> str:
-    return date.strftime(EOSIO_DATE_FORMAT)
+def leap_format_date(date: datetime) -> str:
+    return date.strftime(LEAP_DATE_FORMAT)
 
 
-def eosio_parse_date(date: str) -> datetime:
-    return datetime.strptime(date, EOSIO_DATE_FORMAT)
+def leap_parse_date(date: str) -> datetime:
+    return datetime.strptime(date, LEAP_DATE_FORMAT)
 
 
 class Name:
 
     def __init__(self, _str: str):
-        
+
         assert len(_str) <= 13
         assert not bool(re.compile(r'[^a-z0-9.]').search(_str))
 
@@ -159,7 +159,7 @@ class Name:
 
 
 def name_from_value(n: int) -> Name:
-    """Convert valid eosio name value to the internal representation
+    """Convert valid leap name value to the internal representation
     """
     charmap = '.12345abcdefghijklmnopqrstuvwxyz'
     name = ['.'] * 13
@@ -196,7 +196,7 @@ def char_to_symbol(c):
 
 
 def string_to_name(s: str) -> int:
-    """Convert valid eosio name to its number repr
+    """Convert valid leap name to its number repr
     """
     i = 0
     name = 0
@@ -209,7 +209,7 @@ def string_to_name(s: str) -> int:
 
 
 def name_to_string(n: int) -> str:
-    """Convert valid eosio name to its ascii repr
+    """Convert valid leap name to its ascii repr
     """
     charmap = '.12345abcdefghijklmnopqrstuvwxyz'
     name = ['.'] * 13
@@ -329,7 +329,7 @@ def random_token_symbol():
         for _ in range(3)
     )
 
-def random_eosio_name():
+def random_leap_name():
     return ''.join(
         random.choice('12345abcdefghijklmnopqrstuvwxyz')
         for _ in range(12)
