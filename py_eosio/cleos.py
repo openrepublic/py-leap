@@ -14,11 +14,14 @@ from typing import (
     Optional,
     Iterator
 )
+from urllib3.util.retry import Retry
 from pathlib import Path
 from difflib import SequenceMatcher
 
 from docker.client import DockerClient
 from docker.models.containers import Container
+
+from requests.adapters import HTTPAdapter
 
 from .init import (
     sys_token_supply,
@@ -46,7 +49,7 @@ from .typing import (
 
 
 EOSIO_V = 'eosio-2.1.0'
-LEAP_V = 'leap-3.1.0'
+LEAP_V = 'leap-4.0.0'
 
 
 DEFAULT_NODEOS_REPO = 'guilledk/py-eosio'
@@ -84,6 +87,23 @@ class CLEOS:
         self.private_keys = {}
 
         self._sys_token_init = False
+
+        self._session = requests.Session()
+        retry = Retry(
+            total=5,
+            read=5,
+            connect=10,
+            backoff_factor=0.1,
+        )
+        adapter = HTTPAdapter(max_retries=retry)
+        self._session.mount('http://', adapter)
+        self._session.mount('https://', adapter)
+
+    def _get(self, *args, **kwargs):
+        return self._session.get(*args, **kwargs)
+
+    def _post(self, *args, **kwargs):
+        return self._session.post(*args, **kwargs)
 
     def run(
         self,
@@ -468,7 +488,7 @@ class CLEOS:
             self.logger.info(f'local sum: {local_shasum}')
 
             self.logger.info(f'asking remote {self.remote_endpoint}...')
-            resp = requests.post(
+            resp = self._post(
                 f'{self.remote_endpoint}/v1/chain/get_code',
                 json={
                     'account_name': account_name,
@@ -560,7 +580,7 @@ class CLEOS:
             build_dir,
             f'/tmp/host_contracts')
 
-        self.deploy_contract(
+        return self.deploy_contract(
             contract_name,
             f'/tmp/host_contracts/{build_dir}',
             privileged=privileged,
@@ -571,7 +591,7 @@ class CLEOS:
         )
 
     def create_snapshot(self, target_url: str):
-        resp = requests.post(
+        resp = self._post(
             f'http://{target_url}/v1/producer/create_snapshot'
         )
         assert resp.status_code >= 200 and resp.status_code <= 299
@@ -583,7 +603,7 @@ class CLEOS:
         more = True
         features = []
         while more:
-            r = requests.post(
+            r = self._post(
                 f'{target_url}/v1/chain/get_activated_protocol_features',
                 json={
                     'limit': step,
@@ -775,30 +795,30 @@ class CLEOS:
     # Producer API
 
     def is_block_production_paused(self):
-        return requests.post(
+        return self._post(
             f'{self.url}/v1/producer/paused').json()
 
     def resume_block_production(self):
-        return requests.post(
+        return self._post(
             f'{self.url}/v1/producer/resume').json()
 
     def pause_block_production(self):
-        return requests.post(
+        return self._post(
             f'{self.url}/v1/producer/pause').json()
 
     # Net API
 
     def connected_nodes(self):
-        return requests.post(
+        return self._post(
             f'{self.url}/v1/net/connections').json()
 
     def connect_node(self, endpoint: str):
-        return requests.post(
+        return self._post(
             f'{self.url}/v1/net/connect',
             json=endpoint).json()
 
     def disconnect_node(self, endpoint: str):
-        return requests.post(
+        return self._post(
             f'{self.url}/v1/net/disconnect',
             json=endpoint).json()
 
@@ -942,7 +962,7 @@ class CLEOS:
         :return: Feature hash digest.
         :rtype: str
         """
-        r = requests.post(
+        r = self._post(
             f'{self.endpoint}/v1/producer/get_supported_protocol_features',
             json={}
         )
@@ -965,7 +985,7 @@ class CLEOS:
 
         digest = self.get_feature_digest(feature_name)
         self.logger.info(f'activating {feature_name}...')
-        r = requests.post(
+        r = self._post(
             f'{self.endpoint}/v1/producer/schedule_protocol_feature_activations',
             json={
                 'protocol_features_to_activate': [digest]
@@ -1294,7 +1314,7 @@ class CLEOS:
         account: str,
         scope: str,
         table: str,
-        *args
+        **kwargs
     ) -> List[Dict]:
         """Get table rows from the blockchain.
 
@@ -1311,21 +1331,26 @@ class CLEOS:
 
         done = False
         rows = []
+        params = {
+            'code': account,
+            'scope': scope,
+            'table': table,
+            'json': True,
+            **kwargs
+        }
         while not done:
-            ec, out = self.run([
-                'cleos', '--url', self.url, 'get', 'table',
-                account, scope, table,
-                '-l', '1000', *args
-            ])
-            if ec != 0:
-                self.logger.critical(out)
+            resp = self._post(f'{self.url}/v1/chain/get_table_rows', json=params).json()
+            if 'code' in resp and resp['code'] != 200:
+                self.logger.critical(json.dumps(resp, indent=4))
+                assert False
 
-            assert ec == 0
-            out = json.loads(out)
-            rows.extend(out['rows']) 
-            done = not out['more']
+            self.logger.info(resp)
+            rows.extend(resp['rows'])
+            done = not resp['more']
+            if not done:
+                params['index_position'] = resp['next_key']
 
-        return rows 
+        return rows
 
     def get_info(self) -> Dict[str, Union[str, int]]:
         """Get blockchain statistics.
@@ -1342,7 +1367,7 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: Dict[str, Union[str, int]]
         """
-        resp = requests.get(f'{self.url}/v1/chain/get_info')
+        resp = self._get(f'{self.url}/v1/chain/get_info')
         assert resp.status_code == 200
         return resp.json()
 
