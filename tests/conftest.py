@@ -2,9 +2,8 @@
 
 import pytest
 
-from py_eosio.fixtures import single_node_chain as cleos
-
-from py_eosio.fixtures import multi_node_chain as multi_cleos
+from leap.fixtures import single_node_chain as cleos
+from leap.fixtures import multi_node_chain as multi_cleos
 
 
 @pytest.fixture(scope='session')

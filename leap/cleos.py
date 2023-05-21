@@ -42,18 +42,14 @@ from .sugar import (
 from .errors import ContractDeployError
 from .tokens import sys_token, ram_token
 from .typing import (
-    ExecutionResult, 
+    ExecutionResult,
     ExecutionStream,
     ActionResult
 )
 
 
-EOSIO_V = 'eosio-2.1.0'
-LEAP_V = 'leap-4.0.0'
-
-
 DEFAULT_NODEOS_REPO = 'guilledk/py-eosio'
-DEFAULT_NODEOS_IMAGE = LEAP_V
+DEFAULT_NODEOS_IMAGE = 'leap-4.0.0'
 
 
 def default_nodeos_image():
@@ -263,7 +259,7 @@ class CLEOS:
             cmd += ['--resource-monitor-not-shutdown-on-threshold-exceeded']
 
         if 'state_history_plugin' in plugins:
-            # https://github.com/EOSIO/eos/issues/6334
+            # https://github.com/LEAP/eos/issues/6334
             assert hist_addr
             cmd += [f'--state-history-endpoint={hist_addr}']
             cmd += ['--disable-replay-opts']
@@ -298,7 +294,7 @@ class CLEOS:
             *extra_params
         ]
         if state_plugin:
-            # https://github.com/EOSIO/eos/issues/6334
+            # https://github.com/LEAP/eos/issues/6334
             cmd += ['--disable-replay-opts']
 
         if genesis:
@@ -823,7 +819,7 @@ class CLEOS:
             json=endpoint).json()
 
     def create_key_pair(self) -> Tuple[str, str]:
-        """Generate a new EOSIO key pair.
+        """Generate a new LEAP key pair.
 
         :return: Public and private key.
         :rtype: Tuple[str, str]
@@ -836,8 +832,8 @@ class CLEOS:
         return lines[0].split(' ')[2].rstrip(), lines[1].split(' ')[2].rstrip()
 
     def create_key_pairs(self, n: int) -> List[Tuple[str, str]]:
-        """Generate ``n`` EOSIO key pairs, faster than calling
-        :func:`~pytest_eosio.EOSIOTestSession.create_key_pair` on a loop.
+        """Generate ``n`` LEAP key pairs, faster than calling
+        :func:`~pytest_eosio.LEAPTestSession.create_key_pair` on a loop.
 
         :return: List of key pairs with a length of ``n``.
         :rtype: List[Tuple[str, str]]
@@ -873,7 +869,7 @@ class CLEOS:
 
     def import_keys(self, private_keys: List[str]):
         """Import a list of private keys into wallet inside testnet container.
-        Faster than calling :func:`~pytest_eosio.EOSIOTestSession.import_key` on a loop.
+        Faster than calling :func:`~pytest_eosio.LEAPTestSession.import_key` on a loop.
         """
         procs = [
             self.open_process(
@@ -1267,9 +1263,9 @@ class CLEOS:
         cpu: str = '10.0000 TLOS',
         ram: int = 181920
     ) -> List[ExecutionResult]:
-        """Same as :func:`~pytest_eosio.EOSIOTestSession.create_account_staked`,
+        """Same as :func:`~pytest_eosio.LEAPTestSession.create_account_staked`,
         but takes lists of names and keys, to create the accounts in parallel,
-        which is faster than calling :func:`~pytest_eosio.EOSIOTestSession.creat
+        which is faster than calling :func:`~pytest_eosio.LEAPTestSession.creat
         e_account_staked` in a loop.
 
         :param owner: The system account that authorizes the creation of a new
@@ -1319,7 +1315,7 @@ class CLEOS:
         """Get table rows from the blockchain.
 
         :param account: Account name of contract were table is located.
-        :param scope: Table scope in EOSIO name format.
+        :param scope: Table scope in LEAP name format.
         :param table: Table name.
         :param args: Additional arguments to pass to ``cleos get table`` (`cleos 
             docs <https://developers.eos.io/manuals/eos/latest/cleos/command-ref
@@ -1411,9 +1407,9 @@ class CLEOS:
         return account_name
 
     def new_accounts(self, n: int) -> List[str]:
-        """Same as :func:`~pytest_eosio.EOSIOTestSession.new_account` but to
+        """Same as :func:`~pytest_eosio.LEAPTestSession.new_account` but to
         create multiple accounts at the same time, faster than calling :func:`~p
-        ytest_eosio.EOSIOTestSession.new_account` on a loop.
+        ytest_eosio.LEAPTestSession.new_account` on a loop.
 
         :param n: Number of accounts to create.
 

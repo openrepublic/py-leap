@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from py_eosio.sugar import random_token_symbol
+from leap.sugar import random_token_symbol
 
 
 def test_create(cleos):

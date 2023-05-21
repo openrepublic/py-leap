@@ -1,8 +1,8 @@
-# `py-eosio`
+# `py-leap`
 
-### Python CLEOS Docker driver
+### Python CLEOS Docker driver / frontend
 
-Wraps `eosio` toolchain running inside a docker container.
+Wraps `leap` toolchain running inside a docker container.
 
 - Run `CLEOS` commands
 - Single node test chain launch & manage
