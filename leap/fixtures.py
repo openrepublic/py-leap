@@ -12,8 +12,7 @@ import requests
 from .cleos import CLEOS, default_nodeos_image
 from .sugar import (
     get_container,
-    get_free_port,
-    random_eosio_name
+    get_free_port
 )
 
 
