@@ -304,7 +304,7 @@ class CLEOS:
             *extra_params
         ]
         if state_plugin:
-            # https://github.com/LEAP/eos/issues/6334
+            # https://github.com/EOSIO/eos/issues/6334
             cmd += ['--disable-replay-opts']
 
         if genesis:
