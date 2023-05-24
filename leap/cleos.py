@@ -18,6 +18,8 @@ from urllib3.util.retry import Retry
 from pathlib import Path
 from difflib import SequenceMatcher
 
+import asks
+
 from docker.client import DockerClient
 from docker.models.containers import Container
 
@@ -30,7 +32,7 @@ from .init import (
 )
 from .sugar import (
     collect_stdout,
-    random_eosio_name,
+    random_leap_name,
     wait_for_attr,
     asset_from_str,
     Asset,
@@ -95,11 +97,19 @@ class CLEOS:
         self._session.mount('http://', adapter)
         self._session.mount('https://', adapter)
 
+        self._asession = asks.Session(connections=200)
+
     def _get(self, *args, **kwargs):
         return self._session.get(*args, **kwargs)
 
     def _post(self, *args, **kwargs):
         return self._session.post(*args, **kwargs)
+
+    async def _aget(self, *args, **kwargs):
+        return await self._asession.get(*args, **kwargs)
+
+    async def _apost(self, *args, **kwargs):
+        return await self._asession.post(*args, **kwargs)
 
     def run(
         self,
@@ -294,7 +304,7 @@ class CLEOS:
             *extra_params
         ]
         if state_plugin:
-            # https://github.com/LEAP/eos/issues/6334
+            # https://github.com/EOSIO/eos/issues/6334
             cmd += ['--disable-replay-opts']
 
         if genesis:
@@ -1090,7 +1100,7 @@ class CLEOS:
         if not sign:
             cmd += ['-s']
 
-        if DEFAULT_NODEOS_IMAGE == LEAP_V:
+        if 'leap' in DEFAULT_NODEOS_IMAGE:
             cmd += ['--use-old-rpc', '-t', 'false']
 
         ec, out = self.run(cmd, retry=retry)
@@ -1348,6 +1358,36 @@ class CLEOS:
 
         return rows
 
+    async def aget_table(
+        self,
+        account: str,
+        scope: str,
+        table: str,
+        **kwargs
+    ) -> List[Dict]:
+        done = False
+        rows = []
+        params = {
+            'code': account,
+            'scope': scope,
+            'table': table,
+            'json': True,
+            **kwargs
+        }
+        while not done:
+            resp = (await self._apost(f'{self.url}/v1/chain/get_table_rows', json=params)).json()
+            if 'code' in resp and resp['code'] != 200:
+                self.logger.critical(json.dumps(resp, indent=4))
+                assert False
+
+            self.logger.info(resp)
+            rows.extend(resp['rows'])
+            done = not resp['more']
+            if not done:
+                params['lower_bound'] = resp['next_key']
+
+        return rows
+
     def get_info(self) -> Dict[str, Union[str, int]]:
         """Get blockchain statistics.
 
@@ -1396,7 +1436,7 @@ class CLEOS:
         if name:
             account_name = name
         else:
-            account_name = random_eosio_name()
+            account_name = random_leap_name()
 
         if 'key' not in kwargs:
             private_key, public_key = self.create_key_pair()
@@ -1417,7 +1457,7 @@ class CLEOS:
         :rtype: List[str]
         """
 
-        names = [random_eosio_name() for _ in range(n)]
+        names = [random_leap_name() for _ in range(n)]
         keys = self.create_key_pairs(n)
         self.import_keys([priv_key for priv_key, pub_key in keys])
         self.create_accounts_staked(
@@ -1519,7 +1559,7 @@ class CLEOS:
         :rtype: str
         """
 
-        proposal_name = random_eosio_name()
+        proposal_name = random_leap_name()
         cmd = [
             'cleos', '--url', self.url,
             'multisig',
@@ -1559,7 +1599,7 @@ class CLEOS:
         :return: New proposal name.
         :rtype: str
         """
-        proposal_name = random_eosio_name()
+        proposal_name = random_leap_name()
         cmd = [
             'cleos', '--url', self.url,
             'multisig',
@@ -1637,7 +1677,7 @@ class CLEOS:
             '-p', permission
         ]
 
-        if DEFAULT_NODEOS_IMAGE == LEAP_V:
+        if 'leap' in DEFAULT_NODEOS_IMAGE:
             cmd += ['--use-old-rpc', '-t', 'false']
 
         ec, out = self.run(cmd)
