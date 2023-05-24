@@ -25,11 +25,6 @@ from docker.models.containers import Container
 
 from requests.adapters import HTTPAdapter
 
-from .init import (
-    sys_token_supply,
-    sys_token_init_issue,
-    ram_supply
-)
 from .sugar import (
     collect_stdout,
     random_leap_name,
@@ -42,7 +37,7 @@ from .sugar import (
     docker_move_into
 )
 from .errors import ContractDeployError
-from .tokens import sys_token, ram_token
+from .tokens import DEFAULT_SYS_TOKEN_SYM
 from .typing import (
     ExecutionResult,
     ExecutionStream,
@@ -50,7 +45,7 @@ from .typing import (
 )
 
 
-DEFAULT_NODEOS_REPO = 'guilledk/py-eosio'
+DEFAULT_NODEOS_REPO = 'guilledk/py-leap'
 DEFAULT_NODEOS_IMAGE = 'leap-4.0.0'
 
 
@@ -662,6 +657,8 @@ class CLEOS:
 
     def boot_sequence(
         self,
+        token_sym: Symbol = DEFAULT_SYS_TOKEN_SYM,
+        ram_amount: int = 16_000_000_000,
         activations_node: Optional[str] = None,
         sys_contracts_mount='/root/nodeos/contracts',
         verify_hash: bool = False 
@@ -687,7 +684,7 @@ class CLEOS:
 
                 ``eosio.token``, ``eosio.msig``, ``eosio.wrap``
 
-            3) Initialize the ``TLOS`` token.
+            3) Initialize the ``SYS`` token.
             4) Activate v1 feature ``PREACTIVATE_FEATURE``.
             5) Deploy ``eosio.system`` to ``eosio`` account.
             6) Activate v2 features ``ONLY_BILL_FIRST_AUTHORIZER`` and ``RAM_RESTRICTIONS``.
@@ -736,7 +733,7 @@ class CLEOS:
             verify_hash=verify_hash
         )
 
-        self.init_sys_token()
+        self.init_sys_token(token_sym=token_sym)
 
         self.activate_feature_v1('PREACTIVATE_FEATURE')
 
@@ -771,14 +768,14 @@ class CLEOS:
 
         ec, _ = self.push_action(
             'eosio', 'init',
-            ['0', sys_token],
+            ['0', token_sym],
             'eosio@active'
         )
         assert ec == 0
 
         ec, _ = self.push_action(
             'eosio', 'setram',
-            [ram_supply.amount],
+            [ram_amount],
             'eosio@active'
         )
         assert ec == 0
@@ -1033,7 +1030,7 @@ class CLEOS:
         quote = asset_from_str(row['quote']['balance']).amount
         base = asset_from_str(row['base']['balance']).amount
 
-        return Asset((quote / base) * 1024 / 0.995, Symbol('TLOS', 4)) 
+        return Asset((quote / base) * 1024 / 0.995, self.sys_token_supply.symbol)
 
     def sign_transaction(
         self,
@@ -1953,18 +1950,26 @@ class CLEOS:
         )
 
 
-    def init_sys_token(self):
+    def init_sys_token(
+        self,
+        token_sym: Symbol = DEFAULT_SYS_TOKEN_SYM,
+        token_amount: int = 420_000_000
+    ):
         """Initialize ``SYS`` token.
 
         Issue all of it to ``eosio`` account.
         """
-
         if not self._sys_token_init:
+
+            self.sys_token_supply = Asset(token_amount, token_sym)
+
+            ec, _ = self.create_token('eosio', self.sys_token_supply)
+            assert ec == 0
+
+            ec, _ = self.issue_token('eosio', self.sys_token_supply, __name__)
+            assert ec == 0
+
             self._sys_token_init = True
-            ec, _ = self.create_token('eosio', sys_token_supply)
-            assert ec == 0
-            ec, _ = self.issue_token('eosio', sys_token_init_issue, __name__)
-            assert ec == 0
 
     def get_global_state(self):
         return self.get_table(

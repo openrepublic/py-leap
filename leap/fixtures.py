@@ -19,9 +19,13 @@ from .sugar import (
 @pytest.fixture(scope='session')
 def single_node_chain():
     dclient = docker.from_env()
+
+    container_img = default_nodeos_image()
+    logging.info(f'launching {container_img} container...')
+
     vtestnet = get_container(
         dclient,
-        default_nodeos_image(),
+        container_img,
         force_unique=True,
         detach=True,
         network='host')
@@ -62,7 +66,7 @@ def multi_node_chain():
     dclient = docker.from_env()
     node_amount = 3
 
-    eosio_container = dclient.containers.run(
+    nodeos_container = dclient.containers.run(
         default_nodeos_image(),
         detach=True,
         network='host',
@@ -80,7 +84,7 @@ def multi_node_chain():
     logger.info('Container launched')
 
     try:
-        cleos = CLEOS(dclient, eosio_container, logger=logger)
+        cleos = CLEOS(dclient, nodeos_container, logger=logger)
 
         keosd_port = get_free_port()
 
@@ -210,6 +214,6 @@ def multi_node_chain():
         yield cleos, apis
 
     finally:
-        eosio_container.stop()
+        nodeos_container.stop()
         for container in node_containers:
             container.stop()

@@ -2,8 +2,8 @@
 
 import json
 
-from leap.sugar import random_eosio_name
-from leap.cleos import DEFAULT_NODEOS_IMAGE, LEAP_V
+from leap.sugar import random_leap_name
+from leap.cleos import default_nodeos_image
 
 # TODO: better testing, as right now we dont have multi producer setup
 
@@ -25,7 +25,7 @@ def test_wrap_exec_direct(cleos):
     tx['ref_block_prefix'] = 0
     tx['context_free_actions'] = []
 
-    if 'eosio-2.1.0' == DEFAULT_NODEOS_IMAGE:
+    if 'eosio-2.1.0' in default_nodeos_image():
         # for eosio 2.1.0 handle diferent tx format
         tx['transaction_extensions'] = []
         tx['actions'][0]['data'] = tx['actions'][0]['hex_data']
