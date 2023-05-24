@@ -1219,8 +1219,8 @@ class CLEOS:
         self,
         owner: str,
         name: str,
-        net: str = '10.0000 TLOS',
-        cpu: str = '10.0000 TLOS',
+        net: float = 10.0,
+        cpu: float = 10.0,
         ram: int = 181920,
         key: Optional[str] = None
     ) -> ExecutionResult:
@@ -1239,6 +1239,9 @@ class CLEOS:
         :return: Exitcode and output.
         :rtype: :ref:`typing_exe_result`
         """
+        net = Asset(net, self.sys_token_supply.symbol)
+        cpu = Asset(cpu, self.sys_token_supply.symbol)
+
         if not key:
             priv, pub = self.create_key_pair()
             self.import_key(priv)
@@ -1266,8 +1269,8 @@ class CLEOS:
         owner: str,
         names: List[str],
         keys: List[str],
-        net: str = '10.0000 TLOS',
-        cpu: str = '10.0000 TLOS',
+        net: float = 10.0,
+        cpu: float = 10.0,
         ram: int = 181920
     ) -> List[ExecutionResult]:
         """Same as :func:`~pytest_eosio.LEAPTestSession.create_account_staked`,
@@ -1287,6 +1290,8 @@ class CLEOS:
         :return: A list the results for each command execution.
         :rtype: List[ExecutionResult]
         """
+        net = Asset(net, self.sys_token_supply.symbol)
+        cpu = Asset(cpu, self.sys_token_supply.symbol)
 
         assert len(names) == len(keys)
         procs = [
