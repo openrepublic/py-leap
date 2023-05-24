@@ -4,6 +4,7 @@ import time
 
 from pathlib import Path
 
+import pytest
 import docker
 
 from leap.cleos import CLEOS, default_nodeos_image
@@ -14,6 +15,7 @@ from leap.sugar import (
 )
 
 
+@pytest.mark.manual
 def test_fork(multi_cleos):
 
     logger = logging.getLogger('cleos')
