@@ -10,9 +10,11 @@ setup(
 	author_email='guillermor@fing.edu.uy',
 	packages=['leap'],
 	install_requires=[
+        'asks',
         'docker',
 		'pytest',
         'natsort',
-        'requests'
+        'requests',
+        'pytest-manual-marker'
 	]
 )
