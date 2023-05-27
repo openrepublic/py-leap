@@ -1501,7 +1501,10 @@ class CLEOS:
         def try_get_info():
             try:
                 return self.get_info()
-            except AssertionError:
+            except (
+                AssertionError,
+                requests.exceptions.ConnectionError
+            ):
                 return None
 
         # when waiting for nodeos to start
