@@ -5,7 +5,7 @@ from setuptools import setup
 
 setup(
 	name='py-leap',
-	version='0.1a12',
+	version='0.1a13',
 	author='Guillermo Rodriguez',
 	author_email='guillermor@fing.edu.uy',
 	packages=['leap'],

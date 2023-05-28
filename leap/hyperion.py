@@ -45,10 +45,10 @@ class HyperionAPI:
         return self._get(
             f'{self.endpoint}/v2/history/get_actions',
             params=kwargs
-        )
+        ).json()
 
     async def aget_actions(self, **kwargs):
-        return await self._aget(
+        return (await self._aget(
             f'{self.endpoint}/v2/history/get_actions',
             params=kwargs
-        )
+        )).json()

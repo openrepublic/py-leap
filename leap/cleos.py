@@ -58,7 +58,7 @@ class CLEOS:
 
     def __init__(
         self,
-        docker_client: DockerClient, 
+        docker_client: DockerClient,
         vtestnet: Container,
         url: str = 'http://127.0.0.1:8888',
         remote: str = 'https://mainnet.telos.net',
@@ -146,7 +146,7 @@ class CLEOS:
                 break
 
             if b'Error 3120003: Locked wallet' in out:
-                ec, _ = self.run(['cleos', 'wallet', 'unlock', '-p', self.wallet_key])
+                ec, _ = self.run(['cleos', 'wallet', 'unlock', f'--password={self.wallet_key}'])
                 assert ec == 0
 
             self.logger.warning(f'cmd run retry num {i}...')
