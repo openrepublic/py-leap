@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 import time
 import json
 import select
@@ -88,11 +89,12 @@ class CLEOS:
             connect=10,
             backoff_factor=0.1,
         )
-        adapter = HTTPAdapter(max_retries=retry)
+        adapter = HTTPAdapter(max_retries=Retry)
         self._session.mount('http://', adapter)
         self._session.mount('https://', adapter)
 
-        self._asession = asks.Session(connections=200)
+        if 'asks' in sys.modules:
+            self._asession = asks.Session(connections=200)
 
     def _get(self, *args, **kwargs):
         return self._session.get(*args, **kwargs)
@@ -142,6 +144,10 @@ class CLEOS:
 
             if ec == 0:
                 break
+
+            if b'Error 3120003: Locked wallet' in out:
+                ec, _ = self.run(['cleos', 'wallet', 'unlock', '-p', self.wallet_key])
+                assert ec == 0
 
             self.logger.warning(f'cmd run retry num {i}...')
 
