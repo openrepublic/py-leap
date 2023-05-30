@@ -6,6 +6,7 @@ import json
 import select
 import logging
 import requests
+import binascii
 
 from typing import (
     Dict,
@@ -19,24 +20,22 @@ from urllib3.util.retry import Retry
 from pathlib import Path
 from difflib import SequenceMatcher
 
+from datetime import datetime, timedelta
+
 import asks
 
 from docker.client import DockerClient
 from docker.models.containers import Container
 
+from ueosio import (
+    sign_tx,
+    DataStream,
+    get_expiration, get_tapos_info, build_push_transaction_body
+)
+
 from requests.adapters import HTTPAdapter
 
-from .sugar import (
-    collect_stdout,
-    random_leap_name,
-    wait_for_attr,
-    asset_from_str,
-    Asset,
-    Symbol,
-    docker_open_process,
-    docker_wait_process,
-    docker_move_into
-)
+from .sugar import *
 from .errors import ContractDeployError
 from .tokens import DEFAULT_SYS_TOKEN_SYM
 from .typing import (
@@ -107,6 +106,91 @@ class CLEOS:
 
     async def _apost(self, *args, **kwargs):
         return await self._asession.post(*args, **kwargs)
+
+    async def a_push_action(
+        self,
+        account: str,
+        action: str,
+        data: dict,
+        actor: str,
+        key: str,
+        permission: str = 'active'
+    ):
+        chain_info = await self.a_get_info()
+        ref_block_num, ref_block_prefix = get_tapos_info(
+            chain_info['last_irreversible_block_id'])
+
+        chain_id = chain_info['chain_id']
+
+        action = {
+            'account': account,
+            'name': action,
+            'data': data,
+            'authorization': [{
+                'actor': actor,
+                'permission': permission
+            }]
+        }
+
+        tx = {
+            'delay_sec': 0,
+            'max_cpu_usage_ms': 0,
+            'actions': [action]
+        }
+
+        # package transation
+        data = tx['actions'][0]['data']
+        ds = DataStream()
+
+        for val in data.values():
+            if isinstance(val, str):
+                ds.pack_string(val)
+
+            elif isinstance(val, Name):
+                ds.pack_name(str(val))
+
+            elif isinstance(val, Asset):
+                ds.pack_asset(str(val))
+
+            elif isinstance(val, Checksum256):
+                ds.pack_checksum256(str(val))
+
+            elif isinstance(val, int):
+                ds.pack_uint64(val)
+
+        tx['actions'][0]['data'] = binascii.hexlify(
+            ds.getvalue()).decode('utf-8')
+
+        tx.update({
+            'expiration': get_expiration(
+                datetime.utcnow(), timedelta(minutes=15).total_seconds()),
+            'ref_block_num': ref_block_num,
+            'ref_block_prefix': ref_block_prefix,
+            'max_net_usage_words': 0,
+            'max_cpu_usage_ms': 0,
+            'delay_sec': 0,
+            'context_free_actions': [],
+            'transaction_extensions': [],
+            'context_free_data': []
+        })
+
+        auth = tx['actions'][0]['authorization'][0]
+
+        # Sign transaction
+        tx_id, tx = sign_tx(chain_id, tx, key)
+
+        # Pack
+        ds = DataStream()
+        ds.pack_transaction(tx)
+        packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
+        tx = build_push_transaction_body(tx['signatures'][0], packed_trx)
+
+        # Push transaction
+        logging.info(f'pushing tx to: {self.endpoint}')
+        logging.info(json.dumps(action, indent=4))
+        res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=tx)).json()
+        logging.info(json.dumps(res, indent=4))
+        return res
 
     def run(
         self,
@@ -1412,6 +1496,25 @@ class CLEOS:
         :rtype: Dict[str, Union[str, int]]
         """
         resp = self._get(f'{self.url}/v1/chain/get_info')
+        assert resp.status_code == 200
+        return resp.json()
+
+    async def a_get_info(self) -> Dict[str, Union[str, int]]:
+        """Get blockchain statistics.
+
+            - ``server_version``
+            - ``head_block_num``
+            - ``last_irreversible_block_num``
+            - ``head_block_id``
+            - ``head_block_time``
+            - ``head_block_producer``
+            - ``recent_slots``
+            - ``participation_rate``
+
+        :return: A dictionary with blockchain information.
+        :rtype: Dict[str, Union[str, int]]
+        """
+        resp = await self._aget(f'{self.url}/v1/chain/get_info')
         assert resp.status_code == 200
         return resp.json()
 

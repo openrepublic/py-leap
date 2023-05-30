@@ -241,6 +241,15 @@ def collect_stdout(out: Dict):
     return output
 
 
+class Checksum256:
+
+    def __init__(self, h: str):
+        self._hash = h
+
+    def __str__(self) -> str:
+        return self._hash
+
+
 # SHA-1 hash of file
 def hash_file(path: Path) -> bytes:
     BUF_SIZE = 65536

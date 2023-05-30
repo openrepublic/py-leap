@@ -1,5 +1,6 @@
 docker
 pytest
+ueosio
 natsort
 requests
 pytest-manual-marker
