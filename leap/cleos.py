@@ -1468,7 +1468,7 @@ class CLEOS:
         }
         while not done:
             resp = (await self._apost(f'{self.url}/v1/chain/get_table_rows', json=params)).json()
-            if 'code' in resp and resp['code'] != 200:
+            if ('code' in resp)  or ('statusCode' in resp):
                 self.logger.critical(json.dumps(resp, indent=4))
                 assert False
 
