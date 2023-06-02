@@ -1,5 +1,8 @@
+ueosio
 docker
 pytest
+ueosio
 natsort
 requests
+zstandard
 pytest-manual-marker

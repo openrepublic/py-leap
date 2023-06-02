@@ -241,6 +241,15 @@ def collect_stdout(out: Dict):
     return output
 
 
+class Checksum256:
+
+    def __init__(self, h: str):
+        self._hash = h
+
+    def __str__(self) -> str:
+        return self._hash
+
+
 # SHA-1 hash of file
 def hash_file(path: Path) -> bytes:
     BUF_SIZE = 65536
@@ -547,3 +556,37 @@ def get_free_port(tries=10):
 
         else:
             return port_num
+
+
+import requests
+from urllib.request import urlretrieve
+import zstandard as zstd
+
+def download_latest_snapshot(
+    target_path: Path, network='telos', version='v6'
+):
+    _repository_url = 'https://snapshots.eosnation.io'
+
+    # first open repo to get filename
+    url = _repository_url + f'/{network}-{version}/latest'
+    file_info = requests.head(url, allow_redirects=True)
+    filename = file_info.url.split('/')[-1]
+
+    file_path = target_path / filename
+
+    # finally retrieve
+    urlretrieve(file_info.url, file_path)
+
+    dec_file_path = target_path / file_path.stem
+    dctx = zstd.ZstdDecompressor()
+    with (
+        open(file_path, 'rb') as ifh,
+        open(dec_file_path, 'wb') as ofh
+    ):
+        dctx.copy_stream(ifh, ofh)
+
+    file_path.unlink()
+
+    block_num = int((filename.split('-')[-1]).split('.')[0])
+
+    return block_num, dec_file_path
