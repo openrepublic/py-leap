@@ -123,12 +123,12 @@ class CLEOS:
         chain_id = chain_info['chain_id']
 
         action = {
-            'account': account,
-            'name': action,
+            'account': str(account),
+            'name': str(action),
             'data': data,
             'authorization': [{
-                'actor': actor,
-                'permission': permission
+                'actor': str(actor),
+                'permission': str(permission)
             }]
         }
 
@@ -1473,12 +1473,20 @@ class CLEOS:
     ) -> List[Dict]:
         done = False
         rows = []
+        _kwargs = dict(kwargs)
+        for key, arg in kwargs.items():
+            if (isinstance(arg, Name) or
+                isinstance(arg, Asset) or
+                isinstance(arg, Symbol) or
+                isinstance(arg, Checksum256)):
+                _kwargs[key] = str(arg)
+
         params = {
-            'code': account,
-            'scope': scope,
-            'table': table,
+            'code': str(account),
+            'scope': str(scope),
+            'table': str(table),
             'json': True,
-            **kwargs
+            **_kwargs
         }
         while not done:
             resp = (await self._apost(f'{self.url}/v1/chain/get_table_rows', json=params)).json()
