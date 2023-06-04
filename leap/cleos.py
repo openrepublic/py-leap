@@ -143,7 +143,6 @@ class CLEOS:
             }
 
             # package transation
-            data = tx['actions'][0]['data']
             ds = DataStream()
 
             for val in data.values():
