@@ -133,64 +133,79 @@ class CLEOS:
             }]
         }
 
-        tx = {
-            'delay_sec': 0,
-            'max_cpu_usage_ms': 0,
-            'actions': [action]
-        }
+        res = None
+        retries = 3
+        while retries > 0:
+            tx = {
+                'delay_sec': 0,
+                'max_cpu_usage_ms': 0,
+                'actions': [action]
+            }
 
-        # package transation
-        data = tx['actions'][0]['data']
-        ds = DataStream()
+            # package transation
+            data = tx['actions'][0]['data']
+            ds = DataStream()
 
-        for val in data.values():
-            if isinstance(val, str):
-                ds.pack_string(val)
+            for val in data.values():
+                if isinstance(val, str):
+                    ds.pack_string(val)
 
-            elif isinstance(val, Name):
-                ds.pack_name(str(val))
+                elif isinstance(val, Name):
+                    ds.pack_name(str(val))
 
-            elif isinstance(val, Asset):
-                ds.pack_asset(str(val))
+                elif isinstance(val, Asset):
+                    ds.pack_asset(str(val))
 
-            elif isinstance(val, Checksum256):
-                ds.pack_checksum256(str(val))
+                elif isinstance(val, Checksum256):
+                    ds.pack_checksum256(str(val))
 
-            elif isinstance(val, int):
-                ds.pack_uint64(val)
+                elif isinstance(val, int):
+                    ds.pack_uint64(val)
 
-        tx['actions'][0]['data'] = binascii.hexlify(
-            ds.getvalue()).decode('utf-8')
+            tx['actions'][0]['data'] = binascii.hexlify(
+                ds.getvalue()).decode('utf-8')
 
-        tx.update({
-            'expiration': get_expiration(
-                datetime.utcnow(), timedelta(minutes=15).total_seconds()),
-            'ref_block_num': ref_block_num,
-            'ref_block_prefix': ref_block_prefix,
-            'max_net_usage_words': 0,
-            'max_cpu_usage_ms': 0,
-            'delay_sec': 0,
-            'context_free_actions': [],
-            'transaction_extensions': [],
-            'context_free_data': []
-        })
+            tx.update({
+                'expiration': get_expiration(
+                    datetime.utcnow(), timedelta(minutes=15).total_seconds()),
+                'ref_block_num': ref_block_num,
+                'ref_block_prefix': ref_block_prefix,
+                'max_net_usage_words': 0,
+                'max_cpu_usage_ms': 0,
+                'delay_sec': 0,
+                'context_free_actions': [],
+                'transaction_extensions': [],
+                'context_free_data': []
+            })
 
-        auth = tx['actions'][0]['authorization'][0]
+            # Sign transaction
+            _, signed_tx = sign_tx(chain_id, tx, key)
 
-        # Sign transaction
-        tx_id, tx = sign_tx(chain_id, tx, key)
+            # Pack
+            ds = DataStream()
+            ds.pack_transaction(signed_tx)
+            packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
+            final_tx = build_push_transaction_body(signed_tx['signatures'][0], packed_trx)
 
-        # Pack
-        ds = DataStream()
-        ds.pack_transaction(tx)
-        packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
-        tx = build_push_transaction_body(tx['signatures'][0], packed_trx)
+            # Push transaction
+            logging.info(f'pushing tx to: {self.endpoint}')
+            logging.info(json.dumps(action, indent=4))
+            res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=final_tx)).json()
+            res_json = json.dumps(res, indent=4)
 
-        # Push transaction
-        logging.info(f'pushing tx to: {self.endpoint}')
-        logging.info(json.dumps(action, indent=4))
-        res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=tx)).json()
-        logging.info(json.dumps(res, indent=4))
+            logging.info(res_json)
+
+            retries -= 1
+
+            if 'error' in res:
+                continue
+
+            else:
+                break
+
+        if not res:
+            ValueError('res is None')
+
         return res
 
     def run(
