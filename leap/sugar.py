@@ -305,7 +305,7 @@ def hash_dir(target: Path, includes=[]):
                     if new_path in files_done:
                         continue
                     new_todo.add(new_path)
-                
+
                 logging.info(f'found include: {include}')
 
         files_todo = new_todo
@@ -579,11 +579,9 @@ def download_latest_snapshot(
 
     dec_file_path = target_path / file_path.stem
     dctx = zstd.ZstdDecompressor()
-    with (
-        open(file_path, 'rb') as ifh,
-        open(dec_file_path, 'wb') as ofh
-    ):
-        dctx.copy_stream(ifh, ofh)
+    with open(file_path, 'rb') as ifh:
+        with open(dec_file_path, 'wb') as ofh:
+            dctx.copy_stream(ifh, ofh)
 
     file_path.unlink()
 
