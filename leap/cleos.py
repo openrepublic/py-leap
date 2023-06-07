@@ -88,7 +88,7 @@ class CLEOS:
             connect=10,
             backoff_factor=0.1,
         )
-        adapter = HTTPAdapter(max_retries=Retry)
+        adapter = HTTPAdapter(max_retries=retry)
         self._session.mount('http://', adapter)
         self._session.mount('https://', adapter)
 
@@ -695,12 +695,19 @@ class CLEOS:
             verify_hash=verify_hash
         )
 
-    def create_snapshot(self, target_url: str):
+    def create_snapshot(self, target_url: str, body: dict):
         resp = self._post(
-            f'http://{target_url}/v1/producer/create_snapshot'
+            f'{target_url}/v1/producer/create_snapshot',
+            json=body
         )
-        assert resp.status_code >= 200 and resp.status_code <= 299
-        return resp.json()
+        return resp
+
+    def schedule_snapshot(self, target_url: str, **kwargs):
+        resp = self._post(
+            f'{target_url}/v1/producer/schedule_snapshot',
+            json=kwargs
+        )
+        return resp
 
     def get_node_activations(self, target_url: str) -> List[Dict]:
         lower_bound = 0
