@@ -46,7 +46,7 @@ from .typing import (
 
 
 DEFAULT_NODEOS_REPO = 'guilledk/py-leap'
-DEFAULT_NODEOS_IMAGE = 'leap-4.0.0'
+DEFAULT_NODEOS_IMAGE = 'leap-4.0.4'
 
 
 def default_nodeos_image():
@@ -80,6 +80,7 @@ class CLEOS:
         self.private_keys = {}
 
         self._sys_token_init = False
+        self.sys_token_supply = Asset(0, DEFAULT_SYS_TOKEN_SYM)
 
         self._session = requests.Session()
         retry = Retry(
