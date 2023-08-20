@@ -305,7 +305,7 @@ def hash_dir(target: Path, includes=[]):
                     if new_path in files_done:
                         continue
                     new_todo.add(new_path)
-                
+
                 logging.info(f'found include: {include}')
 
         files_todo = new_todo
@@ -579,14 +579,131 @@ def download_latest_snapshot(
 
     dec_file_path = target_path / file_path.stem
     dctx = zstd.ZstdDecompressor()
-    with (
-        open(file_path, 'rb') as ifh,
-        open(dec_file_path, 'wb') as ofh
-    ):
-        dctx.copy_stream(ifh, ofh)
+    with open(file_path, 'rb') as ifh:
+        with open(dec_file_path, 'wb') as ofh:
+            dctx.copy_stream(ifh, ofh)
 
     file_path.unlink()
 
     block_num = int((filename.split('-')[-1]).split('.')[0])
 
     return block_num, dec_file_path
+
+
+import os
+import tarfile
+import logging
+from bs4 import BeautifulSoup
+from urllib.request import urlretrieve
+import requests
+from pathlib import Path
+from typing import Optional
+
+try:
+    from tqdm import tqdm
+    TQDM_AVAILABLE = True
+except ImportError:
+    TQDM_AVAILABLE = False
+
+def download_with_progress_bar(url: str, file_path: Path) -> None:
+    if not TQDM_AVAILABLE:
+        raise ImportError('tqdm is not installed')
+
+    response = requests.get(url, stream=True)
+    total_size = int(response.headers.get('content-length', 0))
+    block_size = 1024
+
+    with open(file_path, 'wb') as file:
+        with tqdm(total=total_size, unit='B', unit_scale=True, desc=file_path.name) as bar:
+            for data in response.iter_content(block_size):
+                bar.update(len(data))
+                file.write(data)
+
+def download_snapshot(
+    target_path: Path, block_number: int,
+    network: str = 'mainnet', progress: bool = False,
+    force_download: bool = False
+) -> Optional[Path]:
+    """Download the closest snapshot for a given block number.
+
+    Args:
+        target_path (Path): The path where the snapshot will be saved.
+        block_number (int): The target block number.
+        network (str, optional): The network ('mainnet' or 'testnet'). Defaults to 'mainnet'.
+        progress (bool, optional): Whether to show a progress bar. Defaults to False.
+        force_download (bool, optional): Whether to force download even if the file exists. Defaults to False.
+
+    Returns:
+        Optional[Path]: The path to the downloaded snapshot, or None if not found.
+    """
+
+    if network == 'mainnet':
+        _repository_url = 'https://snapshots.telosunlimited.io/'
+    else:
+        _repository_url = 'https://snapshots.testnet.telosunlimited.io/'
+
+    logging.info('Fetching snapshot list...')
+    response = requests.get(_repository_url)
+    soup = BeautifulSoup(response.text, 'html.parser')
+
+    # Get all snapshots and sort them in descending order by block number
+    snapshots = []
+    for row in soup.find('table', {'id': 'list'}).find('tbody').find_all('tr'):
+        file_name = row.find('a').text
+        if file_name.endswith('.tar.gz') and 'blk-' in file_name:
+            try:
+                snapshot_block_num = int(file_name.split('blk-')[-1].split('.')[0])
+                snapshots.append((snapshot_block_num, file_name))
+            except ValueError:
+                continue
+
+    snapshots.sort(reverse=True, key=lambda x: x[0])
+
+    # Find the snapshot with the highest block number that is <= specified block number
+    closest_snapshot = None
+    for snapshot_block_num, file_name in snapshots:
+        if snapshot_block_num <= block_number:
+            closest_snapshot = file_name
+            break
+
+    if closest_snapshot is None:
+        raise ValueError('No suitable snapshot found.')
+
+    # Determine the final .bin file name
+    final_bin_file_name = closest_snapshot.split('.tar.gz')[0] + '.snapshot.bin'
+    final_bin_file_path = target_path / final_bin_file_name
+
+    # Check if the .bin file already exists
+    if final_bin_file_path.exists() and not force_download:
+        logging.info(f'Snapshot file {final_bin_file_name} already exists. Skipping download.')
+        return final_bin_file_path
+
+    # Download the file
+    file_url = _repository_url + closest_snapshot
+    file_path = target_path / closest_snapshot
+    logging.info(f'Downloading snapshot: {file_url}')
+
+    if progress:
+        download_with_progress_bar(file_url, file_path)
+    else:
+        urlretrieve(file_url, file_path)
+
+    # Decompress the tar.gz
+    temp_extract_path = target_path / file_path.stem
+    logging.info(f'Decompressing snapshot to: {temp_extract_path}')
+    with tarfile.open(file_path, 'r:gz') as tar_ref:
+        tar_ref.extractall(path=temp_extract_path)
+
+    # Move and rename the .bin file
+    temp_extract_path = target_path / file_path.stem
+    bin_file_name = next(f for f in os.listdir(temp_extract_path) if f.endswith('.bin'))
+    bin_file_path = temp_extract_path / bin_file_name
+    os.rename(bin_file_path, final_bin_file_path)
+
+    # Clean up temporary files and directories
+    logging.info('Cleaning up temporary files...')
+    file_path.unlink()
+    os.rmdir(temp_extract_path)
+
+    logging.info('Operation completed successfully.')
+    return final_bin_file_path

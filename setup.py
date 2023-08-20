@@ -5,11 +5,13 @@ from setuptools import setup
 
 setup(
 	name='py-leap',
-	version='0.1a14',
+	version='0.1a15',
 	author='Guillermo Rodriguez',
 	author_email='guillermor@fing.edu.uy',
 	packages=['leap'],
 	install_requires=[
+        'bs4',
+        'asks',
         'ueosio',
         'docker',
 		'pytest',
@@ -17,8 +19,5 @@ setup(
         'requests',
         'zstandard',
         'pytest-manual-marker'
-	],
-    extra_requires={
-        'async': ['asks']
-    }
+	]
 )

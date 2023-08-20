@@ -89,7 +89,7 @@ class CLEOS:
             connect=10,
             backoff_factor=0.1,
         )
-        adapter = HTTPAdapter(max_retries=Retry)
+        adapter = HTTPAdapter(max_retries=retry)
         self._session.mount('http://', adapter)
         self._session.mount('https://', adapter)
 
@@ -124,73 +124,87 @@ class CLEOS:
         chain_id = chain_info['chain_id']
 
         action = {
-            'account': account,
-            'name': action,
+            'account': str(account),
+            'name': str(action),
             'data': data,
             'authorization': [{
-                'actor': actor,
-                'permission': permission
+                'actor': str(actor),
+                'permission': str(permission)
             }]
         }
 
-        tx = {
-            'delay_sec': 0,
-            'max_cpu_usage_ms': 0,
-            'actions': [action]
-        }
+        res = None
+        retries = 3
+        while retries > 0:
+            tx = {
+                'delay_sec': 0,
+                'max_cpu_usage_ms': 0,
+                'actions': [action]
+            }
 
-        # package transation
-        data = tx['actions'][0]['data']
-        ds = DataStream()
+            # package transation
+            ds = DataStream()
 
-        for val in data.values():
-            if isinstance(val, str):
-                ds.pack_string(val)
+            for val in data.values():
+                if isinstance(val, str):
+                    ds.pack_string(val)
 
-            elif isinstance(val, Name):
-                ds.pack_name(str(val))
+                elif isinstance(val, Name):
+                    ds.pack_name(str(val))
 
-            elif isinstance(val, Asset):
-                ds.pack_asset(str(val))
+                elif isinstance(val, Asset):
+                    ds.pack_asset(str(val))
 
-            elif isinstance(val, Checksum256):
-                ds.pack_checksum256(str(val))
+                elif isinstance(val, Checksum256):
+                    ds.pack_checksum256(str(val))
 
-            elif isinstance(val, int):
-                ds.pack_uint64(val)
+                elif isinstance(val, int):
+                    ds.pack_uint64(val)
 
-        tx['actions'][0]['data'] = binascii.hexlify(
-            ds.getvalue()).decode('utf-8')
+            tx['actions'][0]['data'] = binascii.hexlify(
+                ds.getvalue()).decode('utf-8')
 
-        tx.update({
-            'expiration': get_expiration(
-                datetime.utcnow(), timedelta(minutes=15).total_seconds()),
-            'ref_block_num': ref_block_num,
-            'ref_block_prefix': ref_block_prefix,
-            'max_net_usage_words': 0,
-            'max_cpu_usage_ms': 0,
-            'delay_sec': 0,
-            'context_free_actions': [],
-            'transaction_extensions': [],
-            'context_free_data': []
-        })
+            tx.update({
+                'expiration': get_expiration(
+                    datetime.utcnow(), timedelta(minutes=15).total_seconds()),
+                'ref_block_num': ref_block_num,
+                'ref_block_prefix': ref_block_prefix,
+                'max_net_usage_words': 0,
+                'max_cpu_usage_ms': 0,
+                'delay_sec': 0,
+                'context_free_actions': [],
+                'transaction_extensions': [],
+                'context_free_data': []
+            })
 
-        auth = tx['actions'][0]['authorization'][0]
+            # Sign transaction
+            _, signed_tx = sign_tx(chain_id, tx, key)
 
-        # Sign transaction
-        tx_id, tx = sign_tx(chain_id, tx, key)
+            # Pack
+            ds = DataStream()
+            ds.pack_transaction(signed_tx)
+            packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
+            final_tx = build_push_transaction_body(signed_tx['signatures'][0], packed_trx)
 
-        # Pack
-        ds = DataStream()
-        ds.pack_transaction(tx)
-        packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
-        tx = build_push_transaction_body(tx['signatures'][0], packed_trx)
+            # Push transaction
+            logging.info(f'pushing tx to: {self.endpoint}')
+            logging.info(json.dumps(action, indent=4))
+            res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=final_tx)).json()
+            res_json = json.dumps(res, indent=4)
 
-        # Push transaction
-        logging.info(f'pushing tx to: {self.endpoint}')
-        logging.info(json.dumps(action, indent=4))
-        res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=tx)).json()
-        logging.info(json.dumps(res, indent=4))
+            logging.info(res_json)
+
+            retries -= 1
+
+            if 'error' in res:
+                continue
+
+            else:
+                break
+
+        if not res:
+            ValueError('res is None')
+
         return res
 
     def run(
@@ -682,12 +696,19 @@ class CLEOS:
             verify_hash=verify_hash
         )
 
-    def create_snapshot(self, target_url: str):
+    def create_snapshot(self, target_url: str, body: dict):
         resp = self._post(
-            f'http://{target_url}/v1/producer/create_snapshot'
+            f'{target_url}/v1/producer/create_snapshot',
+            json=body
         )
-        assert resp.status_code >= 200 and resp.status_code <= 299
-        return resp.json()
+        return resp
+
+    def schedule_snapshot(self, target_url: str, **kwargs):
+        resp = self._post(
+            f'{target_url}/v1/producer/schedule_snapshot',
+            json=kwargs
+        )
+        return resp
 
     def get_node_activations(self, target_url: str) -> List[Dict]:
         lower_bound = 0
@@ -1460,12 +1481,20 @@ class CLEOS:
     ) -> List[Dict]:
         done = False
         rows = []
+        _kwargs = dict(kwargs)
+        for key, arg in kwargs.items():
+            if (isinstance(arg, Name) or
+                isinstance(arg, Asset) or
+                isinstance(arg, Symbol) or
+                isinstance(arg, Checksum256)):
+                _kwargs[key] = str(arg)
+
         params = {
-            'code': account,
-            'scope': scope,
-            'table': table,
+            'code': str(account),
+            'scope': str(scope),
+            'table': str(table),
             'json': True,
-            **kwargs
+            **_kwargs
         }
         while not done:
             resp = (await self._apost(f'{self.url}/v1/chain/get_table_rows', json=params)).json()
