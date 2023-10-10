@@ -3,7 +3,6 @@
 import sys
 import time
 import json
-import select
 import logging
 import requests
 import binascii
@@ -108,30 +107,12 @@ class CLEOS:
     async def _apost(self, *args, **kwargs):
         return await self._asession.post(*args, **kwargs)
 
-    async def a_push_action(
-        self,
-        account: str,
-        action: str,
-        data: dict,
-        actor: str,
-        key: str,
-        permission: str = 'active'
-    ):
+    async def _create_and_push_tx(self, actions: list[dict], key: str):
         chain_info = await self.a_get_info()
         ref_block_num, ref_block_prefix = get_tapos_info(
             chain_info['last_irreversible_block_id'])
 
         chain_id = chain_info['chain_id']
-
-        action = {
-            'account': str(account),
-            'name': str(action),
-            'data': data,
-            'authorization': [{
-                'actor': str(actor),
-                'permission': str(permission)
-            }]
-        }
 
         res = None
         retries = 3
@@ -139,30 +120,32 @@ class CLEOS:
             tx = {
                 'delay_sec': 0,
                 'max_cpu_usage_ms': 0,
-                'actions': [action]
+                'actions': actions
             }
 
             # package transation
-            ds = DataStream()
+            for i, action in enumerate(actions):
+                ds = DataStream()
+                data = action['data']
 
-            for val in data.values():
-                if isinstance(val, str):
-                    ds.pack_string(val)
+                for val in data.values():
+                    if isinstance(val, str):
+                        ds.pack_string(val)
 
-                elif isinstance(val, Name):
-                    ds.pack_name(str(val))
+                    elif isinstance(val, Name):
+                        ds.pack_name(str(val))
 
-                elif isinstance(val, Asset):
-                    ds.pack_asset(str(val))
+                    elif isinstance(val, Asset):
+                        ds.pack_asset(str(val))
 
-                elif isinstance(val, Checksum256):
-                    ds.pack_checksum256(str(val))
+                    elif isinstance(val, Checksum256):
+                        ds.pack_checksum256(str(val))
 
-                elif isinstance(val, int):
-                    ds.pack_uint64(val)
+                    elif isinstance(val, int):
+                        ds.pack_uint64(val)
 
-            tx['actions'][0]['data'] = binascii.hexlify(
-                ds.getvalue()).decode('utf-8')
+                tx['actions'][i]['data'] = binascii.hexlify(
+                    ds.getvalue()).decode('utf-8')
 
             tx.update({
                 'expiration': get_expiration(
@@ -188,7 +171,7 @@ class CLEOS:
 
             # Push transaction
             logging.info(f'pushing tx to: {self.endpoint}')
-            logging.info(json.dumps(action, indent=4))
+            logging.info(json.dumps(actions, indent=4))
             res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=final_tx)).json()
             res_json = json.dumps(res, indent=4)
 
@@ -206,6 +189,33 @@ class CLEOS:
             ValueError('res is None')
 
         return res
+
+
+    async def a_push_action(
+        self,
+        account: str,
+        action: str,
+        data: dict,
+        actor: str,
+        key: str,
+        permission: str = 'active'
+    ):
+        return await self._create_and_push_tx([{
+            'account': str(account),
+            'name': str(action),
+            'data': data,
+            'authorization': [{
+                'actor': str(actor),
+                'permission': str(permission)
+            }]
+        }], key)
+
+    async def a_push_actions(
+        self,
+        actions: list[dict],
+        key: str,
+    ):
+        return await self._create_and_push_tx(actions, key)
 
     def run(
         self,
