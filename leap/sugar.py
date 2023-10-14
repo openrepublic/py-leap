@@ -250,6 +250,13 @@ class Checksum256:
         return self._hash
 
 
+class ListArgument:
+
+    def __init__(self, l: list, typ: str):
+        self.list = l
+        self.type = typ
+
+
 # SHA-1 hash of file
 def hash_file(path: Path) -> bytes:
     BUF_SIZE = 65536

@@ -145,6 +145,9 @@ class CLEOS:
                     elif isinstance(val, int):
                         ds.pack_uint64(val)
 
+                    elif isinstance(val, ListArgument):
+                        ds.pack_array(val.type, val.list)
+
                 tx['actions'][i]['data'] = binascii.hexlify(
                     ds.getvalue()).decode('utf-8')
 
