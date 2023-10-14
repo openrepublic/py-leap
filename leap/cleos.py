@@ -148,6 +148,10 @@ class CLEOS:
                     elif isinstance(val, ListArgument):
                         ds.pack_array(val.type, val.list)
 
+                    else:
+                        raise ValueError(
+                            f'datastream packing not implemented for {type(val)}')
+
                 tx['actions'][i]['data'] = binascii.hexlify(
                     ds.getvalue()).decode('utf-8')
 
