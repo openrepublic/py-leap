@@ -7,6 +7,7 @@ import logging
 import requests
 import binascii
 
+from copy import deepcopy
 from typing import (
     Dict,
     List,
@@ -120,11 +121,11 @@ class CLEOS:
             tx = {
                 'delay_sec': 0,
                 'max_cpu_usage_ms': 0,
-                'actions': actions
+                'actions': deepcopy(actions)
             }
 
             # package transation
-            for i, action in enumerate(actions):
+            for i, action in enumerate(tx['actions']):
                 ds = DataStream()
                 data = action['data']
 
@@ -171,7 +172,6 @@ class CLEOS:
 
             # Push transaction
             logging.info(f'pushing tx to: {self.endpoint}')
-            logging.info(json.dumps(actions, indent=4))
             res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=final_tx)).json()
             res_json = json.dumps(res, indent=4)
 
