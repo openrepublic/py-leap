@@ -139,6 +139,9 @@ class CLEOS:
                     elif isinstance(val, Asset):
                         ds.pack_asset(str(val))
 
+                    elif isinstance(val, Symbol):
+                        ds.pack_symbol(str(val))
+
                     elif isinstance(val, Checksum256):
                         ds.pack_checksum256(str(val))
 
