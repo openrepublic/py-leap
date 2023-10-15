@@ -116,7 +116,7 @@ class CLEOS:
         chain_id = chain_info['chain_id']
 
         res = None
-        retries = 3
+        retries = 2
         while retries > 0:
             tx = {
                 'delay_sec': 0,
@@ -181,11 +181,11 @@ class CLEOS:
             final_tx = build_push_transaction_body(signed_tx['signatures'][0], packed_trx)
 
             # Push transaction
-            logging.info(f'pushing tx to: {self.endpoint}')
+            logging.debug(f'pushing tx to: {self.endpoint}')
             res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=final_tx)).json()
             res_json = json.dumps(res, indent=4)
 
-            logging.info(res_json)
+            logging.debug(res_json)
 
             retries -= 1
 
