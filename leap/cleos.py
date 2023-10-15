@@ -129,7 +129,16 @@ class CLEOS:
                 ds = DataStream()
                 data = action['data']
 
-                for val in data.values():
+                if isinstance(data, dict):
+                    value_iter = data.values()
+
+                elif isinstance(data, list):
+                    value_iter = data
+
+                else:
+                    raise ValueError(f'type {type(data)} not supported for data argument')
+
+                for val in value_iter:
                     if isinstance(val, str):
                         ds.pack_string(val)
 
