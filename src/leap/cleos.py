@@ -1046,7 +1046,8 @@ class CLEOS:
         if not key:
             priv, pub = self.create_key_pair()
             self.import_key(name, priv)
-            key = pub
+        else:
+            pub = key
 
         actions = [{
             'account': 'eosio',
