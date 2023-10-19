@@ -64,8 +64,9 @@ class CLEOS:
         self.endpoint = url
         self.remote_endpoint = remote
 
-        self.keys: dict[str, str] = {}
-        self.private_keys: dict[str, str] = {}
+        self.keys: Dict[str, str] = {}
+        self.private_keys: Dict[str, str] = {}
+        self._key_to_acc: Dict[str, List[str]] = {}
 
         self._sys_token_init = False
         self.sys_token_supply = Asset(0, DEFAULT_SYS_TOKEN_SYM)
@@ -779,11 +780,23 @@ class CLEOS:
         return keys
 
     def import_key(self, account: str, private_key: str):
-        """Import a private key into wallet inside testnet container.
+        """Import a private key.
         """
         public_key = get_pub_key(private_key)
         self.keys[account] = public_key
         self.private_keys[account] = private_key
+        if public_key not in self._key_to_acc:
+            self._key_to_acc[public_key] = []
+
+        self._key_to_acc[public_key] += [account]
+
+    def assign_key(self, account: str, public_key: str):
+        if public_key not in self._key_to_acc:
+            raise ValueError(f'{public_key} not found on other accounts')
+
+        owner = self._key_to_acc[public_key][0]
+        self.keys[account] = self.keys[owner]
+        self.private_keys[account] = self.private_keys[owner]
 
     def get_feature_digest(self, feature_name: str) -> str:
         """Given a feature name, query the v1 API endpoint: 
@@ -1002,6 +1015,7 @@ class CLEOS:
 
         else:
             pub = key
+            self.assign_key(name, pub)
 
         ec, out = self.push_action(
             'eosio',
@@ -1048,6 +1062,7 @@ class CLEOS:
             self.import_key(name, priv)
         else:
             pub = key
+            self.assign_key(name, pub)
 
         actions = [{
             'account': 'eosio',
