@@ -19,8 +19,6 @@ from binascii import hexlify
 
 from natsort import natsorted
 
-from .typing import ExecutionStream, ExecutionResult
-
 
 LEAP_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
 
@@ -250,32 +248,49 @@ from msgspec import Struct
 class UInt8(Struct):
     num: int
 
+
 class UInt16(Struct):
     num: int
+
 
 class UInt32(Struct):
     num: int
 
+
 class UInt64(Struct):
     num: int
+
 
 class VarUInt32(Struct):
     num: int
 
+
 class Int8(Struct):
     num: int
+
 
 class Int16(Struct):
     num: int
 
+
 class Int32(Struct):
     num: int
+
 
 class Int64(Struct):
     num: int
 
+
 class VarInt32(Struct):
     num: int
+
+
+class Checksum160(Struct):
+    hash: str
+
+    def __str__(self) -> str:
+        return self.hash
+
 
 class Checksum256(Struct):
     hash: str

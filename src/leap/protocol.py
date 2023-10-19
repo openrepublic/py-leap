@@ -409,10 +409,10 @@ class DataStream():
         return self.unpack_bytes().decode('utf8')
 
     def pack_checksum160(self, v):
-        raise Exception("not implementd")
+        self.pack_rd160(v)
 
     def unpack_checksum160(self):
-        raise Exception("not implementd")
+        return self.unpack_rd160()
 
     def pack_checksum256(self, v):
         self.pack_sha256(v)
@@ -647,6 +647,16 @@ class DataStream():
             ("quantity", self.unpack_asset()),
             ("contract", self.unpack_name()),
         ])
+
+    def pack_rd160(self, v):
+        if isinstance(v, str):
+            v = bytes.fromhex(v)
+        if len(v) != 20: raise Exception("Invalid rd160 length")
+        self.write(v)
+
+    def unpack_rd160(self):
+        d = self.read(20)
+        return binascii.hexlify(d).decode('utf-8')
 
     def pack_sha256(self, v):
         if len(v) != 64: raise Exception("Invalid sha256 length")

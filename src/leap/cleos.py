@@ -172,6 +172,9 @@ class CLEOS:
             elif isinstance(val, Authority):
                 ds.pack_authority(val.get_dict())
 
+            elif isinstance(val, Checksum160):
+                ds.pack_rd160(val.hash)
+
             elif isinstance(val, Checksum256):
                 ds.pack_checksum256(str(val))
 
