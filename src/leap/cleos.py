@@ -30,10 +30,6 @@ from requests.adapters import HTTPAdapter
 from .sugar import *
 from .errors import ContractDeployError
 from .tokens import DEFAULT_SYS_TOKEN_SYM
-from .typing import (
-    ExecutionResult,
-    ActionResult
-)
 from .protocol import (
     gen_key_pair,
     get_pub_key,
@@ -43,10 +39,20 @@ from .protocol import (
     get_expiration, get_tapos_info, build_push_transaction_body
 )
 
+# disable warnings about connection retries
 logging.getLogger("urllib3").setLevel(logging.ERROR)
 
 
 class CLEOS:
+    '''Leap http client
+
+    :param url: node endpoint
+    :type url: str
+    :param remote: endpoint used to verify contracts against and clone activations
+    :type remote: str
+    :param logger: optional logger, will create one named cleos if none
+    :type logger: logging.Logger
+    '''
 
     def __init__(
         self,
@@ -264,6 +270,19 @@ class CLEOS:
         key: str,
         permission: str = 'active'
     ):
+        '''Async push action
+
+        :param account: smart contract account name
+        :type account: str
+        :param action: smart contract action name
+        :type action: str
+        :param data: action data
+        :type data: dict
+        :param key: private key used to sign
+        :type key: str
+        :param permission: permission name
+        :type permission: str
+        '''
         return await self._a_create_and_push_tx([{
             'account': str(account),
             'name': str(action),
@@ -279,6 +298,13 @@ class CLEOS:
         actions: list[dict],
         key: str,
     ):
+        '''Async push actions, uses a single tx for all actions.
+
+        :param actions: list of actions
+        :type actions: str
+        :param key: private key used to sign
+        :type key: str
+        '''
         return await self._a_create_and_push_tx(actions, key)
 
     def add_permission(
@@ -288,6 +314,17 @@ class CLEOS:
         parent: str,
         auth: Authority
     ):
+        '''Add permission to an account
+
+        :param account: account name
+        :type account: str
+        :param permission: permission name
+        :type permission: str
+        :param parent: parent account name
+        :type parent: str
+        :param auth: authority schema
+        :type auth: :class:`leap.sugar.Authority`
+        '''
         return self.push_action(
             'eosio',
             'updateauth',
@@ -305,19 +342,26 @@ class CLEOS:
         staked: bool = True,
         verify_hash: bool = True
     ):
-        """Deploy a built contract inside the container.
+        '''Deploy a built contract.
 
         :param account_name: Name of account to deploy contract at.
+        :type account_name: str
         :param wasm: Raw wasm as bytearray
+        :type wasm: bytes
         :param abi: Abi already wrapped on our custom Abi type
+        :type abi: :class:`leap.sugar.Abi`
         :param privileged: ``True`` if contract should be privileged (system
             contracts).
-        :param account_name: Name of the target account of the deployment.
+        :type privileged: bool
         :param create_account: ``True`` if target account should be created.
+        :type create_account: bool
         :param staked: ``True`` if this account should use RAM & NET resources.
+        :type staked: bool
         :param verify_hash: Query remote node for ``contract_name`` and compare
             hashes.
-        """
+        :type verify_hash: bool
+        '''
+
         if create_account:
             if staked:
                 self.create_account_staked('eosio', account_name)
@@ -406,6 +450,18 @@ class CLEOS:
         account_name: Union[str, Name],
         target_url: Optional[str] = None
     ) -> Tuple[str, bytes]:
+        '''Fetches and decodes the WebAssembly (WASM) code for a given account.
+
+        :param account_name: Account to get the WASM code for, can be a string
+            or a :class:`leap.sugar.Abi` object.
+        :type account_name: Union[str, :class:`leap.sugar.Abi`]
+        :param target_url: The URL to fetch the WASM code from. Defaults to `self.url`.
+        :type target_url: Optional[str]
+        :return: A tuple containing the hash and the decoded WASM code.
+        :rtype: Tuple[str, bytes]
+        :raises Exception: If the response contains an 'error' field.
+        '''
+
         if isinstance(account_name, Name):
             account_name = str(account_name)
 
@@ -430,6 +486,17 @@ class CLEOS:
         return wasm_hash, wasm
 
     def get_abi(self, account_name: Union[str, Name], target_url: Optional[str] = None) -> Abi:
+        '''Fetches the ABI (Application Binary Interface) for a given account.
+
+        :param account_name: Account to get the ABI for, can be a string or a :class:`leap.sugar.Name` object.
+        :type account_name: Union[str, :class:`leap.sugar.Name`]
+        :param target_url: The URL to fetch the ABI from. Defaults to `self.url`.
+        :type target_url: Optional[str]
+        :return: An instance of :class:`leap.sugar.Abi` containing the ABI data.
+        :rtype: :class:`leap.sugar.Abi`
+        :raises Exception: If the response contains an 'error' field.
+        '''
+
         if isinstance(account_name, Name):
             account_name = str(account_name)
 
@@ -449,6 +516,17 @@ class CLEOS:
         return Abi(resp['abi'])
 
     def create_snapshot(self, target_url: str, body: dict):
+        '''Initiates a snapshot of the AntelopeIO blockchain at the given URL.
+
+        :param target_url: The URL where the snapshot will be created.
+        :type target_url: str
+        :param body: Parameters for snapshot creation in dictionary format.
+        :type body: dict
+        :return: The HTTP response object.
+        :rtype: Response
+        :note: This function only works if `producer_api_plugin` is enabled on the target node.
+        '''
+
         resp = self._post(
             f'{target_url}/v1/producer/create_snapshot',
             json=body
@@ -456,6 +534,16 @@ class CLEOS:
         return resp
 
     def schedule_snapshot(self, target_url: str, **kwargs):
+        '''Schedules a snapshot of the AntelopeIO blockchain at the given URL.
+
+        :param target_url: The URL where the snapshot will be scheduled.
+        :type target_url: str
+        :param kwargs: Additional keyword arguments for snapshot scheduling.
+        :return: The HTTP response object.
+        :rtype: Response
+        :note: This function only works if `producer_api_plugin` is enabled on the target node.
+        '''
+
         resp = self._post(
             f'{target_url}/v1/producer/schedule_snapshot',
             json=kwargs
@@ -463,6 +551,14 @@ class CLEOS:
         return resp
 
     def get_node_activations(self, target_url: str) -> List[Dict]:
+        '''Fetches a list of activated protocol features from the AntelopeIO blockchain at the given URL.
+
+        :param target_url: The URL to fetch the activated protocol features from.
+        :type target_url: str
+        :return: A list of dictionaries, each representing an activated protocol feature.
+        :rtype: List[Dict]
+        '''
+
         lower_bound = 0
         step = 250
         more = True
@@ -490,6 +586,13 @@ class CLEOS:
         return features
 
     def clone_node_activations(self, target_url: str):
+        '''Clones the activated protocol features from a target AntelopeIO node to the current node.
+
+        :param target_url: The URL to fetch the activated protocol features from.
+        :type target_url: str
+        :raises Exception: If the activation fails.
+        '''
+
         features = self.get_node_activations(target_url)
 
         feature_names = [
@@ -518,6 +621,16 @@ class CLEOS:
         self.logger.info('activated')
 
     def diff_protocol_activations(self, target_one: str, target_two: str):
+        '''Compares the activated protocol features between two AntelopeIO nodes.
+
+        :param target_one: The URL of the first node to compare.
+        :type target_one: str
+        :param target_two: The URL of the second node to compare.
+        :type target_two: str
+        :return: A list of feature names activated in `target_one` but not in `target_two`.
+        :rtype: List[str]
+        '''
+
         features_one = self.get_node_activations(target_one)
         features_two = self.get_node_activations(target_two)
 
@@ -539,6 +652,22 @@ class CLEOS:
         target_url: Optional[str] = None,
         local_name: Optional[str] = None
     ):
+        '''Downloads the smart contract associated with a given account.
+
+        :param account_name: The name of the account holding the smart contract.
+        :type account_name: Union[str, :class:`leap.sugar.Name`]
+        :param download_location: The directory where the contract will be downloaded.
+        :type download_location: Union[str, Path]
+        :param target_url: Optional URL to a specific node. Defaults to the node set in the client.
+        :type target_url: Optional[str]
+        :param local_name: Optional name for the downloaded contract files. Defaults to `account_name`.
+        :type local_name: Optional[str]
+
+        :raises: Custom exceptions based on download failure.
+
+        The function downloads both the WebAssembly (`.wasm`) and ABI (`.abi`) files.
+        '''
+
         if isinstance(download_location, str):
             download_location = Path(download_location).resolve()
 
@@ -566,36 +695,24 @@ class CLEOS:
         activations_node: Optional[str] = None,
         verify_hash: bool = False
     ):
-        """Perform enterprise operating system bios sequence acording to:
+        '''Boots a blockchain with required system contracts and settings.
 
-            https://developers.eos.io/welcome/latest/tutorials/bios-boot-sequence
+        :param contracts: Path to directory containing compiled contract artifacts. Defaults to 'tests/contracts'.
+        :type contracts: Union[str, Path]
+        :param token_sym: System token symbol. Defaults to :const:`DEFAULT_SYS_TOKEN_SYM`.
+        :type token_sym: :class:`leap.sugar.Symbol`
+        :param ram_amount: Initial RAM allocation for system. Defaults to 16,000,000,000.
+        :type ram_amount: int
+        :param activations_node: Endpoint to clone protocol features from. Defaults to None, using `self.remote_endpoint`.
+        :type activations_node: Optional[str]
+        :param verify_hash: Whether to verify contract hash after deployment. Defaults to False.
+        :type verify_hash: bool
 
-        This includes:
+        :raises Exception: Missing ABI or WASM files.
 
-            1) Creating the following accounts:
+        :return: None
+        '''
 
-                - ``eosio.bpay``
-                - ``eosio.names``
-                - ``eosio.ram``
-                - ``eosio.ramfee``
-                - ``eosio.saving``
-                - ``eosio.stake``
-                - ``eosio.vpay``
-                - ``eosio.rex``
-
-            2) Deploy the following contracts that come in vtestnet image:
-
-                ``eosio.token``, ``eosio.msig``, ``eosio.wrap``
-
-            3) Initialize the ``SYS`` token.
-            4) Activate v1 feature ``PREACTIVATE_FEATURE``.
-            5) Deploy ``eosio.system`` to ``eosio`` account.
-            6) Activate v2 features ``ONLY_BILL_FIRST_AUTHORIZER`` and ``RAM_RESTRICTIONS``.
-            7) Set ``eosio.msig`` account as privileged in order to delegate permissions.
-            8) System init.
-            9) Parse contract manifest and deploy user contracts.
-
-        """
         for name in [
             'eosio.bpay',
             'eosio.names',
@@ -730,49 +847,84 @@ class CLEOS:
     # Producer API
 
     def is_block_production_paused(self):
+        '''Checks if block production is currently paused.
+
+        :return: Response from the `/v1/producer/paused` endpoint.
+        :rtype: dict
+        '''
         return self._post(
             f'{self.url}/v1/producer/paused').json()
 
     def resume_block_production(self):
+        '''Resumes block production.
+
+        :return: Response from the `/v1/producer/resume` endpoint.
+        :rtype: dict
+        '''
         return self._post(
             f'{self.url}/v1/producer/resume').json()
 
     def pause_block_production(self):
+        '''Pauses block production.
+
+        :return: Response from the `/v1/producer/pause` endpoint.
+        :rtype: dict
+        '''
         return self._post(
             f'{self.url}/v1/producer/pause').json()
 
     # Net API
 
     def connected_nodes(self):
+        '''Retrieves the connected nodes.
+
+        :return: Response from the `/v1/net/connections` endpoint.
+        :rtype: dict
+        '''
         return self._post(
             f'{self.url}/v1/net/connections').json()
 
     def connect_node(self, endpoint: str):
+        '''Connects to a specified node.
+
+        :param endpoint: Node endpoint to connect to.
+        :type endpoint: str
+        :return: Response from the `/v1/net/connect` endpoint.
+        :rtype: dict
+        '''
         return self._post(
             f'{self.url}/v1/net/connect',
             json=endpoint).json()
 
     def disconnect_node(self, endpoint: str):
+        '''Disconnects from a specified node.
+
+        :param endpoint: Node endpoint to disconnect from.
+        :type endpoint: str
+        :return: Response from the `/v1/net/disconnect` endpoint.
+        :rtype: dict
+        '''
         return self._post(
             f'{self.url}/v1/net/disconnect',
             json=endpoint).json()
 
     def create_key_pair(self) -> Tuple[str, str]:
-        """Generate a new LEAP key pair.
+        '''Generates a key pair.
 
-        :return: Public and private key.
+        :return: Private and public keys.
         :rtype: Tuple[str, str]
-        """
+        '''
         priv, pub = gen_key_pair()
         return priv, pub
 
     def create_key_pairs(self, n: int) -> List[Tuple[str, str]]:
-        """Generate ``n`` LEAP key pairs, faster than calling
-        :func:`~pytest_eosio.LEAPTestSession.create_key_pair` on a loop.
+        '''Generates multiple key pairs.
 
-        :return: List of key pairs with a length of ``n``.
+        :param n: Number of key pairs to generate.
+        :type n: int
+        :return: List of generated private and public keys.
         :rtype: List[Tuple[str, str]]
-        """
+        '''
         keys = []
         for _ in range(n):
             keys.append(self.create_key_pair())
@@ -781,8 +933,13 @@ class CLEOS:
         return keys
 
     def import_key(self, account: str, private_key: str):
-        """Import a private key.
-        """
+        '''Imports a key pair for a given account.
+
+        :param account: Account name.
+        :type account: str
+        :param private_key: Private key to import.
+        :type private_key: str
+        '''
         public_key = get_pub_key(private_key)
         self.keys[account] = public_key
         self.private_keys[account] = private_key
@@ -792,6 +949,13 @@ class CLEOS:
         self._key_to_acc[public_key] += [account]
 
     def assign_key(self, account: str, public_key: str):
+        '''Assigns an existing public key to a new account.
+
+        :param account: New account name.
+        :type account: str
+        :param public_key: Public key to assign.
+        :type public_key: str
+        '''
         if public_key not in self._key_to_acc:
             raise ValueError(f'{public_key} not found on other accounts')
 
@@ -800,15 +964,13 @@ class CLEOS:
         self.private_keys[account] = self.private_keys[owner]
 
     def get_feature_digest(self, feature_name: str) -> str:
-        """Given a feature name, query the v1 API endpoint: 
+        '''Retrieves the feature digest for a given feature name.
 
-            ``/v1/producer/get_supported_protocol_features``
-
-        to retrieve hash digest.
-
-        :return: Feature hash digest.
+        :param feature_name: Name of the feature.
+        :type feature_name: str
+        :return: Feature digest.
         :rtype: str
-        """
+        '''
         r = self._post(
             f'{self.endpoint}/v1/producer/get_supported_protocol_features',
             json={}
@@ -827,9 +989,11 @@ class CLEOS:
         return digest
 
     def activate_feature_v1(self, feature_name: str):
-        """Given a v1 feature name, activate it.
-        """
+        '''Activates a feature using v1 protocol.
 
+        :param feature_name: Name of the feature to activate.
+        :type feature_name: str
+        '''
         digest = self.get_feature_digest(feature_name)
         r = self._post(
             f'{self.endpoint}/v1/producer/schedule_protocol_feature_activations',
@@ -844,8 +1008,11 @@ class CLEOS:
         self.logger.info(f'{feature_name} -> {digest} active.')
 
     def activate_feature_with_digest(self, digest: Union[str, Checksum256]):
-        """Given a v2 feature digest, activate it.
-        """
+        '''Activates a feature using its digest.
+
+        :param digest: Feature digest.
+        :type digest: Union[str, :class:`leap.sugar.Checksum256`]
+        '''
         if isinstance(digest, str):
             digest = Checksum256(digest)
 
@@ -859,13 +1026,22 @@ class CLEOS:
         self.logger.info(f'{digest} active.')
 
     def activate_feature(self, feature_name: str):
-        """Given a v2 feature name, activate it.
-        """
+        '''Wrapper for activating a feature using its name.
 
+        :param feature_name: Name of the feature to activate.
+        :type feature_name: str
+        '''
         digest = self.get_feature_digest(feature_name)
         self.activate_feature_with_digest(digest)
 
     def get_ram_price(self) -> Asset:
+        '''Fetches the current RAM price in the blockchain.
+
+        This function queries the `eosio.rammarket` table and calculates the RAM price based on the quote and base balances.
+
+        :return: Current RAM price as an :class:`leap.sugar.Asset` object.
+        :rtype: :class:`leap.sugar.Asset`
+        '''
         row = self.get_table(
             'eosio', 'eosio', 'rammarket')[0]
 
@@ -948,20 +1124,26 @@ class CLEOS:
         actor: str,
         key: Optional[str] = None,
         permission: str = 'active'
-    ) -> ActionResult:
-        """Execute an action defined in a given contract, in case of failure retry.
+    ) -> Tuple[int, dict]:
+        '''Pushes a single action to the blockchain.
 
-        :param contract: Contract were action is defined.
-        :param action: Name of the action to execute.
-        :param args: List of action arguments.
-        :param permissions: Authority with which to sign this transaction.
-        :param retry: Max amount of retries allowed, can be zero for no retries.
+        :param account: The account to which the action belongs.
+        :type account: str
+        :param action: The action name.
+        :type action: str
+        :param data: The action data.
+        :type data: Union[Dict, List[Any]]
+        :param actor: The authorizing account.
+        :type actor: str
+        :param key: The private key for signing. Defaults to actor's private key.
+        :type key: Optional[str]
+        :param permission: Permission level for the action. Defaults to 'active'.
+        :type permission: str
 
-        :return: Always returns a tuple with the exit code at the beggining and
-            depending if the transaction was exectued, either the resulting json dict,
-            or the full output including errors as a string at the end.
-        :rtype: :ref:`typing_action_result`
-        """
+        :return: Exit code and response dictionary.
+        :rtype: Tuple[int, dict]
+        '''
+
         if not key:
             key = self.private_keys[actor]
 
@@ -986,6 +1168,17 @@ class CLEOS:
         actions: list[dict],
         key: str,
     ):
+        '''Pushes multiple actions to the blockchain in a single transaction.
+
+        :param actions: List of action dictionaries.
+        :type actions: list[dict]
+        :param key: The private key for signing.
+        :type key: str
+
+        :return: Exit code and response dictionary.
+        :rtype: Tuple[int, dict]
+        '''
+
         res = self._create_and_push_tx(actions, key)
 
         if 'error' in res:
@@ -999,17 +1192,19 @@ class CLEOS:
         owner: str,
         name: str,
         key: Optional[str] = None,
-    ) -> ExecutionResult:
-        """Create an unstaked eosio account, usualy used by system contracts.
+    ):
+        '''Creates a new blockchain account.
 
-        :param owner: The system accunt that authorizes the creation of a new account.
-        :param name: The name of the new account conforming to account naming conventions.
-        :param key: The owner public key or permission level for the new account (optional).
+        :param owner: The account that will own the new account.
+        :type owner: str
+        :param name: The new account name.
+        :type name: str
+        :param key: Public key to be assigned to new account. Defaults to a newly created key.
+        :type key: Optional[str]
 
-        :return: Exitcode and output.
-        :rtype: :ref:`typing_exe_result`
-        """
-
+        :return: Exit code and response dictionary.
+        :rtype: Tuple[int, dict]
+        '''
         if not key:
             priv, pub = self.create_key_pair()
             self.import_key(name, priv)
@@ -1037,22 +1232,26 @@ class CLEOS:
         cpu: Union[Asset, int] = 10 * (10 ** 4),
         ram: int = 10_000_000,
         key: Optional[str] = None
-    ) -> ExecutionResult:
-        """Create a staked eosio account.
+    ) -> Tuple[int, dict]:
+        '''Creates a new staked blockchain account.
 
-        :param owner: The system account that authorizes the creation of a new
-            account.
-        :param name: The name of the new account conforming to account naming
-            conventions.
-        :param net: Amount of system tokens to stake to reserve network bandwith.
-        :param cpu: Amount of system tokens to stake to reserve cpu time.
-        :param ram: Amount of bytes of ram to buy for this account.
-        :param key: The owner public key or permission level for the new account
-            (optional).
+        :param owner: The account that will own the new account.
+        :type owner: str
+        :param name: The new account name.
+        :type name: str
+        :param net: Amount of NET to stake. Defaults to 10 * 10^4.
+        :type net: Union[:class:`leap.sugar.Asset`, int]
+        :param cpu: Amount of CPU to stake. Defaults to 10 * 10^4.
+        :type cpu: Union[:class:`leap.sugar.Asset`, int]
+        :param ram: Amount of RAM to buy in bytes. Defaults to 10,000,000.
+        :type ram: int
+        :param key: Public key to be assigned to new account. Defaults to a newly created key.
+        :type key: Optional[str]
 
-        :return: Exitcode and output.
-        :rtype: :ref:`typing_exe_result`
-        """
+        :return: Exit code and response dictionary.
+        :rtype: Tuple[int, dict]
+        '''
+
         if isinstance(net, int):
             net = Asset(net, self.sys_token_supply.symbol)
         if isinstance(cpu, int):
@@ -1188,7 +1387,7 @@ class CLEOS:
         return rows
 
     def get_info(self) -> Dict[str, Union[str, int]]:
-        """Get blockchain statistics.
+        '''Get blockchain statistics.
 
             - ``server_version``
             - ``head_block_num``
@@ -1201,13 +1400,13 @@ class CLEOS:
 
         :return: A dictionary with blockchain information.
         :rtype: Dict[str, Union[str, int]]
-        """
+        '''
         resp = self._get(f'{self.url}/v1/chain/get_info')
         assert resp.status_code == 200
         return resp.json()
 
     async def a_get_info(self) -> Dict[str, Union[str, int]]:
-        """Get blockchain statistics.
+        '''Get blockchain statistics.
 
             - ``server_version``
             - ``head_block_num``
@@ -1220,19 +1419,19 @@ class CLEOS:
 
         :return: A dictionary with blockchain information.
         :rtype: Dict[str, Union[str, int]]
-        """
+        '''
         resp = await self._aget(f'{self.url}/v1/chain/get_info')
         assert resp.status_code == 200
         return resp.json()
 
     def get_resources(self, account: str) -> List[Dict]:
-        """Get account resources.
+        '''Get account resources.
 
         :param account: Name of account to query resources.
 
         :return: A list with a single dictionary which contains, resource info.
         :rtype: List[Dict]
-        """
+        '''
 
         return self.get_table('eosio', account, 'userres')
 
@@ -1242,14 +1441,14 @@ class CLEOS:
         owner: str = 'eosio',
         **kwargs
     ) -> str:
-        """Create a new account with a random key and name, import the private
+        '''Create a new account with a random key and name, import the private
         key into the wallet.
 
         :param name: To set a specific name and not a random one.
 
         :return: New account name.
         :rtype: str
-        """
+        '''
 
         if name:
             account_name = name
@@ -1264,17 +1463,19 @@ class CLEOS:
         payer: str,
         amount: int,
         receiver: Optional[str] = None
-    ) -> ActionResult:
-        """Buy a number of RAM bytes for an account.
+    ) -> Tuple[int, dict]:
+        '''Buys a specific amount of RAM in bytes.
 
-        :param payer: Account to bill.
-        :param amount: Amount of RAM to buy in bytes.
-        :param receiver: In case its present buy RAM bytes for this account
-            instead of receiver.
+        :param payer: Account responsible for the payment.
+        :type payer: str
+        :param amount: Amount of RAM to purchase in bytes.
+        :type amount: int
+        :param receiver: Account that receives the RAM. Defaults to `payer`.
+        :type receiver: Optional[str]
 
-        :return: Exitcode and output of ``buyrambytes`` push action call.
-        :rtype: :ref:`typing_action_result`
-        """
+        :return: Action result as an Tuple[int, dict] object.
+        :rtype: Tuple[int, dict]
+        '''
 
         if not receiver:
             receiver = payer
@@ -1287,10 +1488,13 @@ class CLEOS:
         )
 
     def wait_blocks(self, n: int):
-        """Busy wait till ``n`` amount of blocks are produced on the chain.
+        '''Waits for a specific number of blocks to be produced.
 
-        :param n: Number of blocks to wait.
-        """
+        :param n: Number of blocks to wait for.
+        :type n: int
+
+        :return: None
+        '''
         target_block = int(self.get_info()['head_block_num']) + n
 
         while True:
@@ -1303,66 +1507,15 @@ class CLEOS:
             time.sleep(wait_time)
 
 
-    """Multi signature
-    """
-
-    def multi_sig_propose(
-        self,
-        proposer: str,
-        req_permissions: List[str],
-        tx_petmissions: List[str],
-        contract: str,
-        action_name: str,
-        data: Dict[str, str]
-    ) -> str:
-        """Create a multi signature proposal with a random name.
-
-        :param proposer: Account to authorize the proposal.
-        :param req_permissions: List of permissions required to run proposed
-            transaction.
-        :param tx_permissions: List of permissions that will be applied to
-            transaction when executed.
-        :param contract: Contract were action is defined.
-        :param action_name: Action name.
-        :param data: Dictionary with transaction to execute with multi signature.
-
-        :return: New proposal name.
-        :rtype: str
-        """
-
-        proposal_name = random_leap_name()
-        cmd = [
-            'cleos', '--url', self.url,
-            'multisig',
-            'propose',
-            proposal_name,
-            json.dumps([
-                {'actor': perm[0], 'permission': perm[1]}
-                for perm in [p.split('@') for p in req_permissions]
-            ]),
-            json.dumps([
-                {'actor': perm[0], 'permission': perm[1]}
-                for perm in [p.split('@') for p in tx_petmissions]
-            ]),
-            contract,
-            action_name,
-            json.dumps(data),
-            '-p', proposer
-        ]
-        ec, out = self.run(cmd)
-        assert ec == 0
-
-        return proposal_name
-
-    """Token managment
-    """
+    '''Token managment
+    '''
 
     def get_token_stats(
         self,
         sym: str,
         token_contract: str = 'eosio.token'
     ) -> Dict[str, str]:
-        """Get token statistics.
+        '''Get token statistics.
 
         :param sym: Token symbol.
         :param token_contract: Token contract.
@@ -1370,7 +1523,7 @@ class CLEOS:
         :return: A dictionary with ``\'supply\'``, ``\'max_supply\'`` and
             ``\'issuer\'`` as keys.
         :rtype: Dict[str, str]
-        """
+        '''
 
         return self.get_table(
             token_contract,
@@ -1383,7 +1536,7 @@ class CLEOS:
         account: str,
         token_contract: str = 'eosio.token'
     ) -> Optional[str]:
-        """Get account balance.
+        '''Get account balance.
 
         :param account: Account to query.
         :param token_contract: Token contract.
@@ -1391,7 +1544,7 @@ class CLEOS:
         :return: Account balance in asset form, ``None`` if user has no balance
             entry.
         :rtype: Optional[str]
-        """
+        '''
 
         balances = self.get_table(
             token_contract,
@@ -1405,7 +1558,7 @@ class CLEOS:
             return balances
 
         else:
-            return None 
+            return None
 
     def create_token(
         self,
@@ -1413,16 +1566,21 @@ class CLEOS:
         max_supply: Union[str, Asset],
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> ActionResult:
-        """Create a new token issued by ``issuer``.
+    ) -> Tuple[int, dict]:
+        '''Creates a new token contract.
 
-        :param issuer: Account that issues new token.
-        :param max_supply: Max token supply in asset form.
-        :param token_contract: Token contract.
+        :param issuer: Account authorized to issue and manage the token.
+        :type issuer: Union[str, :class:`leap.sugar.Name`]
+        :param max_supply: Maximum supply for the token.
+        :type max_supply: Union[str, :class:`leap.sugar.Asset`]
+        :param token_contract: Name of the token contract, defaults to 'eosio.token'.
+        :type token_contract: str
+        :param kwargs: Additional keyword arguments.
 
-        :return: ``token_contract.create`` execution result.
-        :rtype: :ref:`typing_action_result`
-        """
+        :return: Tuple containing error code and response.
+        :rtype: Tuple[int, dict]
+        '''
+
         if isinstance(max_supply, str):
             max_supply = asset_from_str(max_supply)
         if isinstance(issuer, str):
@@ -1444,17 +1602,23 @@ class CLEOS:
         memo: str,
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> ActionResult:
-        """Issue a specific quantity of tokens.
+    ) -> Tuple[int, dict]:
+        '''Issues tokens to the issuer account.
 
-        :param issuer: Account that issues new tokens.
-        :param quantity: Quantity of tokens to issue in asset form.
-        :param memo: Memo string to attach to transaction.
-        :param token_contract: Token contract.
+        :param issuer: Account authorized to issue the token.
+        :type issuer: Union[str, :class:`leap.sugar.Name`]
+        :param quantity: Amount of tokens to issue.
+        :type quantity: Union[str, :class:`leap.sugar.Asset`]
+        :param memo: Memo for the issued tokens.
+        :type memo: str
+        :param token_contract: Name of the token contract, defaults to 'eosio.token'.
+        :type token_contract: str
+        :param kwargs: Additional keyword arguments.
 
-        :return: ``token_contract.issue`` execution result.
-        :rtype: :ref:`typing_action_result`
-        """
+        :return: Tuple containing error code and response.
+        :rtype: Tuple[int, dict]
+        '''
+
         if isinstance(quantity, str):
             quantity = asset_from_str(quantity)
         if isinstance(issuer, str):
@@ -1477,18 +1641,25 @@ class CLEOS:
         memo: str = '',
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> ActionResult:
-        """Transfer tokens.
+    ) -> Tuple[int, dict]:
+        '''Transfers tokens from one account to another.
 
-        :param _from: Account that sends the tokens.
-        :param _to: Account that recieves the tokens.
-        :param quantity: Quantity of tokens to issue in asset form.
-        :param memo: Memo string to attach to transaction.
-        :param token_contract: Token contract.
+        :param _from: Sender account.
+        :type _from: Union[str, :class:`leap.sugar.Name`]
+        :param _to: Receiver account.
+        :type _to: Union[str, :class:`leap.sugar.Name`]
+        :param quantity: Amount of tokens to transfer.
+        :type quantity: Union[str, :class:`leap.sugar.Asset`]
+        :param memo: Optional memo for the transaction.
+        :type memo: str
+        :param token_contract: Name of the token contract, defaults to 'eosio.token'.
+        :type token_contract: str
+        :param kwargs: Additional keyword arguments.
 
-        :return: ``token_contract.issue`` execution result.
-        :rtype: :ref:`typing_action_result`
-        """
+        :return: Tuple containing error code and response.
+        :rtype: Tuple[int, dict]
+        '''
+
         if isinstance(quantity, str):
             quantity = asset_from_str(quantity)
         if isinstance(_from, str):
@@ -1512,17 +1683,7 @@ class CLEOS:
         memo: str = '',
         token_contract='eosio.token',
         **kwargs
-    ) -> ActionResult:
-        """Transfer tokens from token contract to an account.
-
-        :param _to: Account that recieves the tokens.
-        :param quantity: Quantity of tokens to issue in asset form.
-        :param memo: Memo string to attach to transaction.
-        :param token_contract: Token contract.
-
-        :return: ``token_contract.issue`` execution result.
-        :rtype: :ref:`typing_action_result`
-        """
+    ) -> Tuple[int, dict]:
         return self.transfer_token(
             'eosio',
             _to,
@@ -1539,17 +1700,7 @@ class CLEOS:
         memo: str = '',
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> ActionResult:
-        """Retire tokens.
-
-        :param issuer: Account that retires the tokens.
-        :param quantity: Quantity of tokens to retire in asset form.
-        :param memo: Memo string to attach to transaction.
-        :param token_contract: Token contract.
-
-        :return: ``token_contract.retire`` execution result.
-        :rtype: :ref:`typing_action_result`
-        """
+    ) -> Tuple[int, dict]:
         if isinstance(quantity, str):
             quantity = asset_from_str(quantity)
         if isinstance(issuer, str):
@@ -1571,18 +1722,7 @@ class CLEOS:
         ram_payer: Union[str, Name],
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> ActionResult:
-        """Allows `ram_payer` to create an account `owner` with zero balance for
-        token `sym` at the expense of `ram_payer`.
-
-        :param owner: the account to be created,
-        :param sym: the token to be payed with by `ram_payer`,
-        :param ram_payer: the account that supports the cost of this action.
-        :param token_contract: Token contract.
-
-        :return: ``token_contract.open`` execution result.
-        :rtype: :ref:`typing_action_result`
-        """
+    ) -> Tuple[int, dict]:
         if isinstance(sym, str):
             sym = symbol_from_str(sym)
         if isinstance(owner, str):
@@ -1605,16 +1745,7 @@ class CLEOS:
         sym: Union[str, Symbol],
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> ActionResult:
-        """This action is the opposite for open, it closes the account `owner`
-        for token `sym`.
-
-        :param owner: the owner account to execute the close action for,
-        :param symbol: the symbol of the token to execute the close action for.
-
-        :return: ``token_contract.close`` execution result.
-        :rtype: :ref:`typing_action_result`
-        """
+    ) -> Tuple[int, dict]:
         if isinstance(sym, str):
             sym = symbol_from_str(sym)
         if isinstance(owner, str):
@@ -1635,10 +1766,10 @@ class CLEOS:
         token_sym: Symbol = DEFAULT_SYS_TOKEN_SYM,
         token_amount: int = 420_000_000 * (10 ** 4)
     ):
-        """Initialize ``SYS`` token.
+        '''Initialize ``SYS`` token.
 
         Issue all of it to ``eosio`` account.
-        """
+        '''
         if not self._sys_token_init:
 
             self.sys_token_supply = Asset(token_amount, token_sym)
@@ -1768,10 +1899,20 @@ class CLEOS:
         )
 
     def get_schedule(self):
+        '''Fetches the current producer schedule.
+
+        :return: JSON object containing the current producer schedule.
+        :rtype: dict
+        '''
         return self._post(
             f'{self.url}/v1/chain/get_producer_schedule').json()
 
     def get_producers(self):
+        '''Fetches information on producers.
+
+        :return: List of dictionaries containing producer information.
+        :rtype: List[Dict]
+        '''
         return self.get_table(
             'eosio',
             'eosio',
@@ -1779,6 +1920,15 @@ class CLEOS:
         )
 
     def get_producer(self, producer: str) -> Optional[Dict]:
+        '''Fetches information on a specific producer.
+
+        :param producer: The name of the producer to query.
+        :type producer: str
+
+        :return: Dictionary containing producer information, or None if not found.
+        :rtype: Optional[Dict]
+        '''
+
         rows = self.get_table(
             'eosio', 'eosio', 'producers',
             '--key-type', 'name', '--index', '1',
@@ -1790,7 +1940,12 @@ class CLEOS:
         else:
             return rows[0]
 
-    def get_payrate(self, producer: str) -> Optional[Dict]:
+    def get_payrate(self) -> Optional[Dict]:
+        '''Fetches the current payrate.
+
+        :return: Dictionary containing payrate information, or None if not found.
+        :rtype: Optional[Dict]
+        '''
         rows = self.get_table(
             'eosio', 'eosio', 'payrate')
 
@@ -1798,17 +1953,3 @@ class CLEOS:
             return None
         else:
             return rows[0]
-
-    def wrap_exec(
-        self,
-        executer: str,
-        tx: Dict,
-        **kwargs
-    ):
-        return self.push_action(
-            'eosio.wrap',
-            'exec',
-            [executer, tx],
-            f'{executer}@active',
-            **kwargs
-        )
