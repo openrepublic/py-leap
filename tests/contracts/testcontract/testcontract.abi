@@ -23,7 +23,7 @@
             "fields": [
                 {
                     "name": "val",
-                    "type": "checksum160"
+                    "type": "checksum160?"
                 },
                 {
                     "name": "check_str",

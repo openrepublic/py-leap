@@ -10,7 +10,8 @@ void testcontract::checkasset(const asset& ass, int64_t checkam) {
 }
 
 
-void testcontract::checkripmd(const checksum160& val,  const string& check_str) {
-    auto hex_val = string_to_hex<20>(val.extract_as_byte_array());
+void testcontract::checkripmd(const std::optional<checksum160>& val,  const string& check_str) {
+    check(val.has_value(), "optional should have value");
+    auto hex_val = string_to_hex<20>(val->extract_as_byte_array());
     check(hex_val == check_str, hex_val + " != " + check_str);
 }

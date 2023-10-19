@@ -167,6 +167,10 @@ class CLEOS:
             elif isinstance(val, Symbol):
                 ds.pack_symbol(str(val))
 
+            elif isinstance(val, LeapOptional):
+                opt_val = val
+                ds.pack_optional(opt_val.type, opt_val.value)
+
             elif isinstance(val, PublicKey):
                 ds.pack_public_key(val.get())
 

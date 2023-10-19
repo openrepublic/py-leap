@@ -10,7 +10,7 @@ import random
 import logging
 import tarfile
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 from decimal import Decimal
 from pathlib import Path
 from hashlib import sha1
@@ -249,6 +249,11 @@ def collect_stdout(out: Dict):
 
 
 from msgspec import Struct
+
+
+class LeapOptional(Struct):
+    value: Any
+    type: str
 
 
 class UInt8(Struct):

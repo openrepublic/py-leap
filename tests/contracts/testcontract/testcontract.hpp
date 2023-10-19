@@ -28,5 +28,5 @@ class [[eosio::contract]] testcontract : public contract {
         void checkasset(const asset& ass, int64_t checkam);
 
         [[eosio::action]]
-        void checkripmd(const checksum160& val, const string& check_str);
+        void checkripmd(const std::optional<checksum160>& val, const string& check_str);
 };

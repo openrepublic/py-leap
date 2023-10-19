@@ -2,7 +2,7 @@
 
 import pytest
 
-from leap.sugar import Asset, Checksum160, Int64, asset_from_str
+from leap.sugar import Asset, Checksum160, Int64, LeapOptional, asset_from_str
 from leap.tokens import tlos_token
 
 
@@ -51,7 +51,7 @@ def test_ripmd160(cleos_w_testcontract):
     ec, _ = cleos.push_action(
         'testcontract',
         'checkripmd',
-        [Checksum160(test_hash), test_hash],
+        [LeapOptional(test_hash, 'rd160'), test_hash],
         'testcontract'
     )
     assert ec == 0
