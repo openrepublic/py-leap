@@ -13,7 +13,7 @@ base58 = '^2.1.1'
 cryptos = '^2.0.9'
 natsort = '^8.4.0'
 requests = '^2.31.0'
-msgspec = "^0.18.4"
+msgspec = '0.18.4'
 
 [tool.poetry.group.dev]
 optional = true
