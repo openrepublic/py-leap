@@ -20,10 +20,10 @@ git clone https://github.com/guilledk/py-leap.git
 
 cd py-leap
 
-poetry install --with=nodemngr --with=dev
+poetry install --with=dev
 
 poetry shell
 
-pytest
+pytest tests/test_libre_dex.py
 
 ```

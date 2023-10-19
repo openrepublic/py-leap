@@ -6,13 +6,8 @@ from leap.sugar import Asset, Checksum160, Int64, asset_from_str
 from leap.tokens import tlos_token
 
 
-@pytest.mark.contracts(
-    testcontract=(
-        'tests/contracts/testcontract/testcontract.wasm',
-        'tests/contracts/testcontract/testcontract.abi'
-    )
-)
-def test_asset(cleos):
+def test_asset(cleos_w_testcontract):
+    cleos = cleos_w_testcontract
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
@@ -49,13 +44,8 @@ def test_asset(cleos):
     assert res['error']['details'][0]['message'] == 'assertion failure with message: magnitude of asset amount must be less than 2^62'
 
 
-@pytest.mark.contracts(
-    testcontract=(
-        'tests/contracts/testcontract/testcontract.wasm',
-        'tests/contracts/testcontract/testcontract.abi'
-    )
-)
-def test_ripmd160(cleos):
+def test_ripmd160(cleos_w_testcontract):
+    cleos = cleos_w_testcontract
     test_hash = 'd80744e16d62c62c5fa2a04b92da3fe6b9efb523'
 
     ec, _ = cleos.push_action(

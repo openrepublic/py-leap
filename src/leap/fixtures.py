@@ -2,10 +2,10 @@
 
 import json
 import logging
-import time
 
 from typing import Optional
 from pathlib import Path
+from contextlib import contextmanager
 
 import docker
 import pytest
@@ -38,9 +38,9 @@ def maybe_get_marker(request, mark_name: str, field: str, default):
         return getattr(mark, field)
 
 
-@pytest.fixture()
-def single_node_chain(request, tmp_path_factory):
-    tmp_path = tmp_path_factory.getbasetemp()
+@contextmanager
+def bootstrap_test_nodeos(request, tmp_path_factory):
+    tmp_path = tmp_path_factory.getbasetemp() / request.node.name
     leap_path = tmp_path / 'leap'
     leap_path.mkdir(parents=True, exist_ok=True)
     leap_path = leap_path.resolve()
@@ -104,9 +104,11 @@ def single_node_chain(request, tmp_path_factory):
             }, indent=4)
         )
 
-    cmd += ['--genesis-json', '/root/genesis.json']
-
-    cmd += ['--contracts-console']
+    cmd += [
+        '--genesis-json', '/root/genesis.json',
+        '--contracts-console',
+        '>>', '/root/nodeos.log', '2>&1'
+    ]
     vtestnet = get_container(
         dclient,
         container_img,
@@ -116,7 +118,7 @@ def single_node_chain(request, tmp_path_factory):
         remove=True,
         ports={'8888/tcp': http_port},
         mounts=[Mount('/root', str(leap_path), 'bind')],
-        command=cmd
+        command=['/bin/bash', '-c', ' '.join(cmd)]
     )
 
     try:
@@ -186,3 +188,9 @@ def single_node_chain(request, tmp_path_factory):
 
         except docker.errors.NotFound:
             ...
+
+
+@pytest.fixture()
+def cleos(request, tmp_path_factory):
+    with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
+        yield cleos
