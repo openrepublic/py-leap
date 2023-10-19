@@ -21,10 +21,11 @@ def test_create(cleos):
 def test_create_negative_supply(cleos):
     creator = cleos.new_account()
 
-    ec, out = cleos.create_token(
-        creator, f'-1000.000 {random_token_symbol()}', retry=0)
+    ec, res = cleos.create_token(
+        creator, f'-1000.000 {random_token_symbol()}')
     assert ec == 1
-    assert 'max-supply must be positive' in out
+    assert 'error' in res
+    assert 'max-supply must be positive' in res['error']['details'][0]['message']
 
 
 def test_symbol_exists(cleos):
@@ -35,14 +36,17 @@ def test_symbol_exists(cleos):
     ec, _ = cleos.create_token(creator, max_supply)
     assert ec == 0
 
-    ec, out = cleos.create_token(creator, max_supply, retry=0)
+    cleos.wait_blocks(1)
+
+    ec, res = cleos.create_token(creator, max_supply)
     assert ec == 1
-    assert 'token with symbol already exists' in out
+    assert 'error' in res
+    assert 'token with symbol already exists' in res['error']['details'][0]['message']
 
 
 def test_create_max_possible(cleos):
     creator = cleos.new_account()
-    amount = 4611686018427387903
+    amount = (1 << 62) - 1
     sym = random_token_symbol()
     max_supply = f'{amount} {sym}'
 
@@ -58,13 +62,14 @@ def test_create_max_possible(cleos):
 
 def test_create_max_possible_plus_one(cleos):
     creator = cleos.new_account()
-    amount = 4611686018427387903 + 1
+    amount = (1 << 62)
     sym = random_token_symbol()
     max_supply = f'{amount} {sym}'
 
-    ec, out = cleos.create_token(creator, max_supply, retry=0)
+    ec, res = cleos.create_token(creator, max_supply)
     assert ec == 1
-    assert 'magnitude of asset amount must be less than 2^62' in out
+    assert 'error' in res
+    assert 'invalid supply' in res['error']['details'][0]['message']
 
 def test_create_max_decimals(cleos):
     creator = cleos.new_account()
@@ -91,7 +96,6 @@ def test_issue(cleos):
 
     ec, _ = cleos.create_token(creator, max_supply)
     assert ec == 0
-   
     issued = f'500.000 {sym}'
     ec, _ = cleos.issue_token(creator, issued, 'hola')
     assert ec == 0
@@ -107,14 +111,18 @@ def test_issue(cleos):
     assert balance == issued
 
     issued = f'500.001 {sym}'
-    ec, out = cleos.issue_token(creator, issued, 'hola')
+    ec, res = cleos.issue_token(creator, issued, 'hola')
     assert ec == 1
-    assert 'quantity exceeds available supply' in out
+    assert 'error' in res
+    assert 'quantity exceeds available supply' in res['error']['details'][0]['message']
 
     issued = f'-1.000 {sym}'
-    ec, out = cleos.issue_token(creator, issued, 'hola')
+    ec, res = cleos.issue_token(creator, issued, 'hola')
     assert ec == 1
-    assert 'must issue positive quantity' in out
+    assert 'error' in res
+    assert 'must issue positive quantity' in res['error']['details'][0]['message']
+
+    cleos.wait_blocks(1)
 
     issued = f'500.000 {sym}'
     ec, _ = cleos.issue_token(creator, issued, 'hola')
@@ -128,7 +136,7 @@ def test_retire(cleos):
 
     ec, _ = cleos.create_token(creator, max_supply)
     assert ec == 0
-   
+
     issued = f'500.000 {sym}'
     ec, _ = cleos.issue_token(creator, issued, 'hola')
     assert ec == 0
@@ -148,18 +156,18 @@ def test_retire(cleos):
 
     tkn_stats = cleos.get_token_stats(sym)
 
-    assert tkn_stats['supply'] == f'300.000 {sym}' 
+    assert tkn_stats['supply'] == f'300.000 {sym}'
     assert tkn_stats['max_supply'] == max_supply
     assert tkn_stats['issuer'] == creator
 
     balance = cleos.get_balance(creator)
 
-    assert balance == f'300.000 {sym}' 
+    assert balance == f'300.000 {sym}'
 
     # should fail to retire more than current supply
-    ec, out = cleos.retire_token(creator, issued, retry=0)
+    ec, res = cleos.retire_token(creator, issued)
     assert ec == 1
-    assert 'overdrawn balance' in out
+    assert 'overdrawn balance' in res['error']['details'][0]['message']
 
     # transfer some tokens to friend
     friend = cleos.new_account()
@@ -169,8 +177,9 @@ def test_retire(cleos):
     assert ec == 0
  
     # should fail to retire since tokens are not on the issuer's balance
-    ec, out = cleos.retire_token(creator, f'300.000 {sym}', retry=0)
+    ec, res = cleos.retire_token(creator, f'300.000 {sym}')
     assert ec == 1
+    assert 'overdrawn balance' in res['error']['details'][0]['message']
 
     # give tokens back
     ec, _ = cleos.transfer_token(
@@ -182,18 +191,18 @@ def test_retire(cleos):
 
     tkn_stats = cleos.get_token_stats(sym)
 
-    assert tkn_stats['supply'] == f'0.000 {sym}' 
+    assert tkn_stats['supply'] == f'0.000 {sym}'
     assert tkn_stats['max_supply'] == max_supply
     assert tkn_stats['issuer'] == creator
 
     balance = cleos.get_balance(creator)
 
-    assert balance == f'0.000 {sym}' 
+    assert balance == f'0.000 {sym}'
 
     # try to retire with 0 balance
-    ec, out = cleos.retire_token(creator, f'1.000 {sym}', retry=0)
+    ec, res = cleos.retire_token(creator, f'1.000 {sym}')
     assert ec == 1
-    assert 'overdrawn balance' in out
+    assert 'overdrawn balance' in res['error']['details'][0]['message']
 
 
 def test_transfer(cleos):
@@ -229,15 +238,13 @@ def test_transfer(cleos):
     balance = cleos.get_balance(friend)
     assert balance == f'300 {sym}'
 
-    ec, out = cleos.transfer_token(
-        creator, friend, f'701 {sym}', retry=0)
+    ec, res = cleos.transfer_token(creator, friend, f'701 {sym}')
     assert ec == 1
-    assert 'overdrawn balance' in out 
+    assert 'overdrawn balance' in res['error']['details'][0]['message']
 
-    ec, out = cleos.transfer_token(
-        creator, friend, f'-1 {sym}', retry=0)
+    ec, res = cleos.transfer_token(creator, friend, f'-1 {sym}')
     assert ec == 1
-    assert 'must transfer positive quantity' in out
+    assert 'must transfer positive quantity' in res['error']['details'][0]['message']
 
 
 def test_open(cleos):
@@ -251,13 +258,13 @@ def test_open(cleos):
 
     balance = cleos.get_balance(creator)
 
-    assert balance == None 
+    assert balance == None
 
     friend = cleos.new_account()
 
-    ec, out = cleos.issue_token(friend, max_supply, 'hola', retry=0)
+    ec, res = cleos.issue_token(friend, max_supply, 'hola')
     assert ec == 1
-    assert 'tokens can only be issued to issuer account' in out
+    assert 'tokens can only be issued to issuer account' in res['error']['details'][0]['message']
 
     ec, _ = cleos.issue_token(creator, max_supply, 'hola')
     assert ec == 0
@@ -268,9 +275,9 @@ def test_open(cleos):
     balance = cleos.get_balance(friend)
     assert balance == None
 
-    ec, out = cleos.open_token('null', f'0,{sym}', creator, retry=0)
+    ec, res = cleos.open_token('null', f'0,{sym}', creator)
     assert ec == 1
-    assert 'owner account does not exist' in out
+    assert 'owner account does not exist' in res['error']['details'][0]['message']
 
     ec, _ = cleos.open_token(friend, f'0,{sym}', creator)
     assert ec == 0
@@ -287,13 +294,13 @@ def test_open(cleos):
     assert balance == transfered
 
     tester = cleos.new_account()
-    ec, out = cleos.open_token(tester, '0,INVALID', creator, retry=0)
+    ec, res = cleos.open_token(tester, '0,INVALID', creator)
     assert ec == 1
-    assert 'symbol does not exist' in out
+    assert 'symbol does not exist' in res['error']['details'][0]['message']
 
-    ec, out = cleos.open_token(tester, f'1,{sym}', creator, retry=0)
+    ec, res = cleos.open_token(tester, f'1,{sym}', creator)
     assert ec == 1
-    assert 'symbol precision mismatch' in out
+    assert 'symbol precision mismatch' in res['error']['details'][0]['message']
 
 
 def test_close(cleos):

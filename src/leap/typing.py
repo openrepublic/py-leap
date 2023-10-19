@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 
 from typing import (
-    Iterator, Optional, Union, Tuple, List, Dict
+    Iterator, Union, Tuple, Dict
 )
 
 

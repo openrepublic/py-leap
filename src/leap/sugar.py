@@ -4,15 +4,13 @@ from __future__ import annotations
 
 import re
 import time
-import json
 import socket
 import string
 import random
 import logging
 import tarfile
-import tempfile
 
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from decimal import Decimal
 from pathlib import Path
 from hashlib import sha1
@@ -20,8 +18,6 @@ from datetime import datetime
 from binascii import hexlify
 
 from natsort import natsorted
-from docker.errors import NotFound
-from docker.models.containers import Container
 
 from .typing import ExecutionStream, ExecutionResult
 
@@ -66,7 +62,7 @@ def symbol_from_str(str_sym: str):
 
 class Asset:
 
-    def __init__(self, amount: float, symbol: Symbol):
+    def __init__(self, amount: int, symbol: Symbol):
         self.amount = amount
         self.symbol = symbol
 
@@ -77,17 +73,24 @@ class Asset:
         )
 
     def __str__(self) -> str:
-        number = format(self.amount, f'.{self.symbol.precision}f')
-        return f'{number} {self.symbol.code}'
+        str_amount = str(self.amount).zfill(self.symbol.precision + 1)
+        if self.symbol.precision:
+            return f'{str_amount[:-self.symbol.precision]}.{str_amount[-self.symbol.precision:]} {self.symbol.code}'
+        return f'{str_amount} {self.symbol.code}'
+
 
 
 def asset_from_str(str_asset: str):
     numeric, sym = str_asset.split(' ')
+
     if '.' not in numeric:
         precision = 0
+
     else:
         precision = len(numeric) - numeric.index('.') - 1
-    return Asset(float(numeric), Symbol(sym, precision))
+        numeric = numeric.replace('.', '')
+
+    return Asset(int(numeric), Symbol(sym, precision))
 
 
 def asset_from_decimal(dec: Decimal, precision: int, sym: str):
@@ -241,20 +244,121 @@ def collect_stdout(out: Dict):
     return output
 
 
-class Checksum256:
+from msgspec import Struct
 
-    def __init__(self, h: str):
-        self._hash = h
+
+class UInt8(Struct):
+    num: int
+
+class UInt16(Struct):
+    num: int
+
+class UInt32(Struct):
+    num: int
+
+class UInt64(Struct):
+    num: int
+
+class VarUInt32(Struct):
+    num: int
+
+class Int8(Struct):
+    num: int
+
+class Int16(Struct):
+    num: int
+
+class Int32(Struct):
+    num: int
+
+class Int64(Struct):
+    num: int
+
+class VarInt32(Struct):
+    num: int
+
+class Checksum256(Struct):
+    hash: str
 
     def __str__(self) -> str:
-        return self._hash
+        return self.hash
 
 
-class ListArgument:
+class ListArgument(Struct):
+    list: List
+    type: str
 
-    def __init__(self, l: list, typ: str):
-        self.list = l
-        self.type = typ
+
+class PermissionLevel(Struct):
+    actor: str
+    permission: str
+
+    def get_dict(self) -> dict:
+        return {
+            'actor': self.actor,
+            'permission': self.permission
+        }
+
+
+class PermissionLevelWeight(Struct):
+    permission: PermissionLevel
+    weight: int
+
+    def get_dict(self) -> dict:
+        return {
+            'permission': self.permission.get_dict(),
+            'weight': self.weight
+        }
+
+
+class PublicKey(Struct):
+    key: str
+
+    def get(self) -> str:
+        return self.key
+
+
+class KeyWeight(Struct):
+    key: PublicKey
+    weight: int
+
+    def get_dict(self) -> dict:
+        return {
+            'key': self.key.get(),
+            'weight': self.weight
+        }
+
+
+class WaitWeight(Struct):
+    wait: int
+    weight: int
+
+    def get_dict(self) -> dict:
+        return {
+            'wait_sec': self.wait,
+            'weight': self.weight
+        }
+
+
+class Authority(Struct):
+    threshold: int
+    keys: List[KeyWeight]
+    accounts: List[PermissionLevelWeight]
+    waits: List[WaitWeight]
+
+    def get_dict(self) -> dict:
+        return {
+            'threshold': self.threshold,
+            'keys': [k.get_dict() for k in self.keys],
+            'accounts': [a.get_dict() for a in self.accounts],
+            'waits': [w.get_dict() for w in self.waits]
+        }
+
+class Abi(Struct):
+    abi: dict
+
+    def get_dict(self) -> dict:
+        return self.abi
 
 
 # SHA-1 hash of file
@@ -352,39 +456,6 @@ def random_leap_name():
     )
 
 
-# docker helpers
-
-def wait_for_attr(
-    cntr: Container,
-    attr_path: Tuple[str],
-    expect=None,
-    timeout=20
-):
-    """Wait for a container's attr value to be set.
-    If ``expect`` is provided wait for the value to be set to that value.
-    """
-    def get(val, path):
-        for key in path:
-            try:
-                val = val[key]
-
-            except KeyError as ke:
-                raise KeyError(f'{key} not found in {val}')
-
-        return val
-
-    start = time.time()
-    while time.time() - start < timeout:
-        cntr.reload()
-        val = get(cntr.attrs, attr_path)
-        if expect is None and val:
-            return val
-        elif val == expect:
-            return val
-    else:
-        raise TimeoutError("{} failed to be {}, value: \"{}\"".format(
-            attr_path, expect if expect else 'not None', val))
-
 def get_container(
     dockerctl,
     image: str,
@@ -438,111 +509,6 @@ def get_container(
     return dockerctl.containers.run(image, *args, **kwargs)
 
 
-def docker_open_process(
-    client,
-    cntr,
-    cmd: List[str],
-    **kwargs
-) -> ExecutionStream:
-    """Begin running the command inside the container, return the
-    internal docker process id, and a stream for the standard output.
-
-    :param cmd: List of individual string forming the command to execute in
-        the testnet container shell.
-    :param kwargs: A variable number of key word arguments can be
-        provided, as this function uses `exec_create & exec_start docker APIs
-        <https://docker-py.readthedocs.io/en/stable/api.html#module-dock
-        er.api.exec_api>`_.
-
-    :return: A tuple with the process execution id and the output stream to
-        be consumed.
-    :rtype: :ref:`typing_exe_stream`
-    """
-    exec_id = client.api.exec_create(cntr.id, cmd, **kwargs)
-    exec_stream = client.api.exec_start(exec_id=exec_id, stream=True)
-    return exec_id['Id'], exec_stream
-
-def docker_wait_process(
-    client,
-    exec_id: str,
-    exec_stream: Iterator[str],
-    logger=None
-) -> ExecutionResult:
-    """Collect output from process stream, then inspect process and return
-    exitcode.
-
-    :param exec_id: Process execution id provided by docker engine.
-    :param exec_stream: Process output stream to be consumed.
-
-    :return: Exitcode and process output.
-    :rtype: :ref:`typing_exe_result`
-    """
-    if logger is None:
-        logger = logging.getLogger()
-
-    out = ''
-    for chunk in exec_stream:
-        msg = chunk.decode('utf-8')
-        out += msg
-
-    info = client.api.exec_inspect(exec_id)
-
-    ec = info['ExitCode']
-    if ec != 0:
-        logger.warning(out.rstrip())
-
-    return ec, out
-
-
-def docker_move_into(
-    client,
-    container: Union[str, Container],
-    src: Union[str, Path],
-    dst: Union[str, Path]
-):
-    tmp_name = random_string(size=32)
-    archive_loc = Path(f'/tmp/{tmp_name}.tar.gz').resolve()
-
-    with tarfile.open(archive_loc, mode='w:gz') as archive:
-        archive.add(src, recursive=True)
-
-    with open(archive_loc, 'rb') as archive:
-        binary_data = archive.read()
-
-    archive_loc.unlink()
-
-    if isinstance(container, Container):
-        container = container.id
-
-    client.api.put_archive(container, dst, binary_data)
-
-
-def docker_move_out(
-    client,
-    container: Union[str, Container],
-    src: Union[str, Path],
-    dst: Union[str, Path]
-):
-    tmp_name = random_string(size=32)
-    archive_loc = Path(f'/tmp/{tmp_name}.tar.gz').resolve()
-
-    bits, stats = container.get_archive(src, encode_stream=True)
-
-    with open(archive_loc, mode='wb+') as archive:
-        for chunk in bits:
-            archive.write(chunk)
-
-    extract_path = Path(dst).resolve()
-
-    if extract_path.is_file():
-        extract_path = extract_path.parent
-
-    with tarfile.open(archive_loc, 'r') as archive:
-        archive.extractall(path=extract_path)
-
-    archive_loc.unlink()
-
-
 def get_free_port(tries=10):
     _min = 10000
     _max = 60000
@@ -565,13 +531,14 @@ def get_free_port(tries=10):
             return port_num
 
 
-import requests
-from urllib.request import urlretrieve
-import zstandard as zstd
 
 def download_latest_snapshot(
     target_path: Path, network='telos', version='v6'
 ):
+    import requests
+    from urllib.request import urlretrieve
+    import zstandard as zstd
+
     _repository_url = 'https://snapshots.eosnation.io'
 
     # first open repo to get filename
@@ -600,19 +567,16 @@ def download_latest_snapshot(
 import os
 import tarfile
 import logging
-from bs4 import BeautifulSoup
-from urllib.request import urlretrieve
-import requests
 from pathlib import Path
 from typing import Optional
 
-try:
-    from tqdm import tqdm
-    TQDM_AVAILABLE = True
-except ImportError:
-    TQDM_AVAILABLE = False
-
 def download_with_progress_bar(url: str, file_path: Path) -> None:
+    try:
+        from tqdm import tqdm
+        TQDM_AVAILABLE = True
+    except ImportError:
+        TQDM_AVAILABLE = False
+
     if not TQDM_AVAILABLE:
         raise ImportError('tqdm is not installed')
 
@@ -643,6 +607,9 @@ def download_snapshot(
     Returns:
         Optional[Path]: The path to the downloaded snapshot, or None if not found.
     """
+    from bs4 import BeautifulSoup
+    from urllib.request import urlretrieve
+    import requests
 
     if network == 'mainnet':
         _repository_url = 'https://snapshots.telosunlimited.io/'

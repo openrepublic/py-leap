@@ -1,8 +1,29 @@
 # `py-leap`
 
-### Python CLEOS Docker driver / frontend
+### Python Antelope Framework
 
-Wraps `leap` toolchain running inside a docker container.
+`CLEOS` http api & docker based automated end-to-end tests with `pytest`
 
-- Run `CLEOS` commands
-- Single node test chain launch & manage
+### Quickstart
+
+Requirements:
+
+
+- `git`
+- `python` >=3.8
+- `poetry` -> https://python-poetry.org/
+- `docker` (Optional: required for testing framework)
+
+```
+
+git clone https://github.com/guilledk/py-leap.git
+
+cd py-leap
+
+poetry install --with=nodemngr --with=dev
+
+poetry shell
+
+pytest
+
+```
