@@ -395,6 +395,7 @@ class CLEOS:
 
         if 'error' not in res:
             self.logger.info('deployed')
+            return res
 
         else:
             self.logger.error(json.dumps(res, indent=4))
