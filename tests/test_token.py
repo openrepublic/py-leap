@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 
+import pytest
 from leap.sugar import random_token_symbol
 
 
+@pytest.mark.bootstrap()
 def test_create(cleos):
     creator = cleos.new_account()
     sym = random_token_symbol()
@@ -18,6 +20,7 @@ def test_create(cleos):
     assert tkn_stats['issuer'] == creator
 
 
+@pytest.mark.bootstrap()
 def test_create_negative_supply(cleos):
     creator = cleos.new_account()
 
@@ -28,6 +31,7 @@ def test_create_negative_supply(cleos):
     assert 'max-supply must be positive' in res['error']['details'][0]['message']
 
 
+@pytest.mark.bootstrap()
 def test_symbol_exists(cleos):
     creator = cleos.new_account()
     sym = random_token_symbol()
@@ -44,6 +48,7 @@ def test_symbol_exists(cleos):
     assert 'token with symbol already exists' in res['error']['details'][0]['message']
 
 
+@pytest.mark.bootstrap()
 def test_create_max_possible(cleos):
     creator = cleos.new_account()
     amount = (1 << 62) - 1
@@ -60,6 +65,7 @@ def test_create_max_possible(cleos):
     assert tkn_stats['issuer'] == creator
 
 
+@pytest.mark.bootstrap()
 def test_create_max_possible_plus_one(cleos):
     creator = cleos.new_account()
     amount = (1 << 62)
@@ -71,6 +77,7 @@ def test_create_max_possible_plus_one(cleos):
     assert 'error' in res
     assert 'invalid supply' in res['error']['details'][0]['message']
 
+@pytest.mark.bootstrap()
 def test_create_max_decimals(cleos):
     creator = cleos.new_account()
     amount = 1
@@ -89,6 +96,7 @@ def test_create_max_decimals(cleos):
     assert tkn_stats['issuer'] == creator
 
 
+@pytest.mark.bootstrap()
 def test_issue(cleos):
     creator = cleos.new_account()
     sym = random_token_symbol()
@@ -129,6 +137,7 @@ def test_issue(cleos):
     assert ec == 0
 
 
+@pytest.mark.bootstrap()
 def test_retire(cleos):
     creator = cleos.new_account()
     sym = random_token_symbol()
@@ -205,6 +214,7 @@ def test_retire(cleos):
     assert 'overdrawn balance' in res['error']['details'][0]['message']
 
 
+@pytest.mark.bootstrap()
 def test_transfer(cleos):
     creator = cleos.new_account()
     sym = random_token_symbol()
@@ -247,6 +257,7 @@ def test_transfer(cleos):
     assert 'must transfer positive quantity' in res['error']['details'][0]['message']
 
 
+@pytest.mark.bootstrap()
 def test_open(cleos):
     creator = cleos.new_account()
     sym = random_token_symbol()
@@ -303,6 +314,7 @@ def test_open(cleos):
     assert 'symbol precision mismatch' in res['error']['details'][0]['message']
 
 
+@pytest.mark.bootstrap()
 def test_close(cleos):
     creator = cleos.new_account()
     sym = random_token_symbol()

@@ -8,3 +8,9 @@ void testcontract::checkasset(const asset& ass, int64_t checkam) {
           "invalid amount: " + std::to_string(ass.amount) + " " +
           "should be: " + std::to_string(checkam));
 }
+
+
+void testcontract::checkripmd(const checksum160& val,  const string& check_str) {
+    auto hex_val = string_to_hex<20>(val.extract_as_byte_array());
+    check(hex_val == check_str, hex_val + " != " + check_str);
+}

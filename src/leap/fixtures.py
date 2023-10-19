@@ -16,6 +16,7 @@ from leap.protocol import gen_key_pair
 
 from .cleos import CLEOS
 from .sugar import (
+    Abi,
     get_container,
     get_free_port,
 )
@@ -29,12 +30,26 @@ def default_nodeos_image():
     return f'{DEFAULT_NODEOS_REPO}:{DEFAULT_NODEOS_IMAGE}'
 
 
-@pytest.fixture(scope='session')
-def single_node_chain(tmp_path_factory):
+def maybe_get_marker(request, mark_name: str, field: str, default):
+    mark = request.node.get_closest_marker(mark_name)
+    if mark is None:
+        return default
+    else:
+        return getattr(mark, field)
+
+
+@pytest.fixture()
+def single_node_chain(request, tmp_path_factory):
     tmp_path = tmp_path_factory.getbasetemp()
     leap_path = tmp_path / 'leap'
     leap_path.mkdir(parents=True, exist_ok=True)
     leap_path = leap_path.resolve()
+
+    bootstrap: bool = maybe_get_marker(
+        request, 'bootstrap', 'args', False) != False
+
+    contracts = maybe_get_marker(
+        request, 'contracts', 'kwargs', {})
 
     logging.info(f'created tmp path at {leap_path}')
 
@@ -109,44 +124,59 @@ def single_node_chain(tmp_path_factory):
 
         cleos.import_key('eosio', priv)
 
-        # maybe download sys contracts
-        download_location = Path('tests/contracts')
-        download_location.mkdir(exist_ok=True, parents=True)
+        if bootstrap:
+            # maybe download sys contracts
+            download_location = Path('tests/contracts')
+            download_location.mkdir(exist_ok=True, parents=True)
 
-        def maybe_download_contract(
-            account_name: str,
-            local_name: Optional[str] = None
-        ):
-            if not local_name:
-                local_name = account_name
+            def maybe_download_contract(
+                account_name: str,
+                local_name: Optional[str] = None
+            ):
+                if not local_name:
+                    local_name = account_name
 
-            logging.info(f'maybe download {local_name}')
+                logging.info(f'maybe download {local_name}')
 
-            contract_loc = download_location / local_name
-            if contract_loc.is_dir():
-                logging.info('...skip already downloaded.')
-                return
+                contract_loc = download_location / local_name
+                if contract_loc.is_dir():
+                    logging.info('...skip already downloaded.')
+                    return
 
-            else:
-                logging.info('downloading...')
-                contract_loc.mkdir()
+                else:
+                    logging.info('downloading...')
+                    contract_loc.mkdir()
 
-            cleos.download_contract(
-                account_name, contract_loc,
-                target_url=cleos.remote_endpoint,
-                local_name=local_name
-            )
-            logging.info('done.')
+                cleos.download_contract(
+                    account_name, contract_loc,
+                    target_url=cleos.remote_endpoint,
+                    local_name=local_name
+                )
+                logging.info('done.')
 
-        maybe_download_contract('eosio.token')
-        maybe_download_contract('eosio.msig')
-        maybe_download_contract('eosio.wrap')
-        maybe_download_contract('eosio', local_name='eosio.system')
-        maybe_download_contract('telos.decide')
+            maybe_download_contract('eosio.token')
+            maybe_download_contract('eosio.msig')
+            maybe_download_contract('eosio.wrap')
+            maybe_download_contract('eosio', local_name='eosio.system')
+            maybe_download_contract('telos.decide')
 
-        cleos.wait_blocks(1)
-        cleos.boot_sequence(
-            contracts=download_location)
+            cleos.wait_blocks(1)
+            cleos.boot_sequence(
+                contracts=download_location)
+        else:
+            cleos.wait_blocks(1)
+
+        for account_name, locations in contracts.items():
+            wasm_path, abi_path = locations
+
+            with open(wasm_path, 'rb') as wasm_file:
+                wasm = wasm_file.read()
+
+            with open(abi_path, 'r') as abi_file:
+                abi = Abi(json.loads(abi_file.read()))
+
+            cleos.deploy_contract(
+                account_name, wasm, abi, verify_hash=False)
 
         yield cleos
 

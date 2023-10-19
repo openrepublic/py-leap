@@ -76,6 +76,12 @@ class Asset:
             return f'{str_amount[:-self.symbol.precision]}.{str_amount[-self.symbol.precision:]} {self.symbol.code}'
         return f'{str_amount} {self.symbol.code}'
 
+    def to_decimal(self) -> Decimal:
+        str_amount = str(self.amount).zfill(self.symbol.precision + 1)
+        if self.symbol.precision:
+            str_amount = f'{str_amount[:-self.symbol.precision]}.{str_amount[-self.symbol.precision:]}'
+
+        return Decimal(str_amount)
 
 
 def asset_from_str(str_asset: str):

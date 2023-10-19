@@ -16,12 +16,31 @@
                     "type": "int64"
                 }
             ]
+        },
+        {
+            "name": "checkripmd",
+            "base": "",
+            "fields": [
+                {
+                    "name": "val",
+                    "type": "checksum160"
+                },
+                {
+                    "name": "check_str",
+                    "type": "string"
+                }
+            ]
         }
     ],
     "actions": [
         {
             "name": "checkasset",
             "type": "checkasset",
+            "ricardian_contract": ""
+        },
+        {
+            "name": "checkripmd",
+            "type": "checkripmd",
             "ricardian_contract": ""
         }
     ],

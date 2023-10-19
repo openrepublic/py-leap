@@ -33,6 +33,10 @@ zstandard = {version = '^0.21.0'}
 [tool.pytest.ini_options]
 log_cli = true
 log_cli_level = 'INFO'
+markers = [
+    'bootstrap: test requires full chain bootstrap',
+    'contracts: specify contracts you need deployed'
+]
 
 [build-system]
 requires = ['poetry-core']

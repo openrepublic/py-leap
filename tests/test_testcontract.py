@@ -1,22 +1,18 @@
 #!/usr/bin/env python3
 
-import json
+import pytest
 
-from leap.sugar import Asset, Abi, Int64, asset_from_str
+from leap.sugar import Asset, Checksum160, Int64, asset_from_str
 from leap.tokens import tlos_token
 
 
+@pytest.mark.contracts(
+    testcontract=(
+        'tests/contracts/testcontract/testcontract.wasm',
+        'tests/contracts/testcontract/testcontract.abi'
+    )
+)
 def test_asset(cleos):
-    with open('tests/contracts/testcontract/testcontract.wasm', 'rb') as wasm_file:
-        wasm = wasm_file.read()
-
-    with open('tests/contracts/testcontract/testcontract.abi', 'r') as abi_file:
-        abi = Abi(json.loads(abi_file.read()))
-
-    cleos.deploy_contract(
-        'testcontract',
-        wasm, abi, verify_hash=False)
-
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
@@ -51,3 +47,21 @@ def test_asset(cleos):
     )
     assert ec == 1
     assert res['error']['details'][0]['message'] == 'assertion failure with message: magnitude of asset amount must be less than 2^62'
+
+
+@pytest.mark.contracts(
+    testcontract=(
+        'tests/contracts/testcontract/testcontract.wasm',
+        'tests/contracts/testcontract/testcontract.abi'
+    )
+)
+def test_ripmd160(cleos):
+    test_hash = 'd80744e16d62c62c5fa2a04b92da3fe6b9efb523'
+
+    ec, _ = cleos.push_action(
+        'testcontract',
+        'checkripmd',
+        [Checksum160(test_hash), test_hash],
+        'testcontract'
+    )
+    assert ec == 0
