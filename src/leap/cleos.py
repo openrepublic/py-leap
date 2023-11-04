@@ -199,7 +199,13 @@ class CLEOS:
         return binascii.hexlify(
             ds.getvalue()).decode('utf-8')
 
-    async def _a_create_and_push_tx(self, actions: list[dict], key: str) -> dict:
+    async def _a_create_and_push_tx(
+        self,
+        actions: list[dict],
+        key: str,
+        max_cpu_usage_ms=100,
+        max_net_usage_words=0
+    ) -> dict:
         chain_info = await self.a_get_info()
         ref_block_num, ref_block_prefix = get_tapos_info(
             chain_info['last_irreversible_block_id'])
@@ -211,7 +217,7 @@ class CLEOS:
         while retries > 0:
             tx = {
                 'delay_sec': 0,
-                'max_cpu_usage_ms': 0,
+                'max_cpu_usage_ms': max_cpu_usage_ms,
                 'actions': deepcopy(actions)
             }
 
@@ -224,8 +230,8 @@ class CLEOS:
                     datetime.utcnow(), timedelta(minutes=15).total_seconds()),
                 'ref_block_num': ref_block_num,
                 'ref_block_prefix': ref_block_prefix,
-                'max_net_usage_words': 0,
-                'max_cpu_usage_ms': 0,
+                'max_net_usage_words': max_net_usage_words,
+                'max_cpu_usage_ms': max_cpu_usage_ms,
                 'delay_sec': 0,
                 'context_free_actions': [],
                 'transaction_extensions': [],
@@ -272,7 +278,8 @@ class CLEOS:
         data: dict,
         actor: str,
         key: str,
-        permission: str = 'active'
+        permission: str = 'active',
+        **kwargs
     ):
         '''Async push action
 
@@ -295,12 +302,13 @@ class CLEOS:
                 'actor': str(actor),
                 'permission': str(permission)
             }]
-        }], key)
+        }], key, **kwargs)
 
     async def a_push_actions(
         self,
         actions: list[dict],
         key: str,
+        **kwargs
     ):
         '''Async push actions, uses a single tx for all actions.
 
@@ -309,7 +317,7 @@ class CLEOS:
         :param key: private key used to sign
         :type key: str
         '''
-        return await self._a_create_and_push_tx(actions, key)
+        return await self._a_create_and_push_tx(actions, key, **kwargs)
 
     def add_permission(
         self,
@@ -1057,7 +1065,13 @@ class CLEOS:
                 10 ** self.sys_token_supply.symbol.precision),
             self.sys_token_supply.symbol)
 
-    def _create_and_push_tx(self, actions: list[dict], key: str) -> dict:
+    def _create_and_push_tx(
+        self,
+        actions: list[dict],
+        key: str,
+        max_cpu_usage_ms=100,
+        max_net_usage_words=0
+    ) -> dict:
         chain_info = self.get_info()
         ref_block_num, ref_block_prefix = get_tapos_info(
             chain_info['last_irreversible_block_id'])
@@ -1127,7 +1141,8 @@ class CLEOS:
         data: Union[Dict, List[Any]],
         actor: str,
         key: Optional[str] = None,
-        permission: str = 'active'
+        permission: str = 'active',
+        **kwargs
     ) -> Tuple[int, dict]:
         '''Pushes a single action to the blockchain.
 
@@ -1159,7 +1174,7 @@ class CLEOS:
                 'actor': str(actor),
                 'permission': str(permission)
             }]
-        }], key)
+        }], key, **kwargs)
 
         if 'error' in res:
             self.logger.error(json.dumps(res, indent=4))
@@ -1171,6 +1186,7 @@ class CLEOS:
         self,
         actions: list[dict],
         key: str,
+        **kwargs
     ):
         '''Pushes multiple actions to the blockchain in a single transaction.
 
@@ -1183,7 +1199,7 @@ class CLEOS:
         :rtype: Tuple[int, dict]
         '''
 
-        res = self._create_and_push_tx(actions, key)
+        res = self._create_and_push_tx(actions, key, **kwargs)
 
         if 'error' in res:
             self.logger.error(json.dumps(res, indent=4))
