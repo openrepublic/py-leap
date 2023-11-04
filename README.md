@@ -16,7 +16,7 @@ Requirements:
 
 ```
 
-git clone https://github.com/guilledk/py-leap.git
+git clone https://github.com/guilledk/py-leap.git -b v0.1a16
 
 cd py-leap
 
