@@ -1,0 +1,51 @@
+name: CI
+
+on: [push]
+
+jobs:
+  auto-tests:
+    name: Pytest Tests
+    runs-on: ubuntu-20.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v2
+        with:
+          submodules: recursive
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Setup poetry
+        uses: abatilo/actions-poetry@v2
+
+#     - uses: actions/cache@v3
+#       name: Cache venv
+#       with:
+#         path: ./.venv
+#         key: venv-${{ hashFiles('poetry.lock') }}
+
+      - name: Install with dev
+        run: poetry install --with=dev
+
+      - name: Run simple tests
+        run: |
+          poetry run \
+            pytest \
+              tests/test_libre_dex.py \
+              tests/test_sugar.py
+
+      - name: Install with node manager
+        run: poetry install --with=nodemngr
+
+      - name: Run end to end tests
+        run: |
+          poetry run \
+            pytest tests/test_token.py
+
+          poetry run \
+            pytest tests/test_testcontract.py
+
+        env:
+          MANAGED_LEAP: true

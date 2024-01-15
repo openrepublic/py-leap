@@ -1,100 +1,51 @@
 {
     "____comment": "This file was generated with eosio-abigen. DO NOT EDIT ",
-    "version": "eosio::abi/1.1",
+    "version": "eosio::abi/1.2",
     "types": [],
     "structs": [
         {
-            "name": "addsecidx",
+            "name": "checkasset",
             "base": "",
             "fields": [
                 {
-                    "name": "other",
-                    "type": "uint64"
+                    "name": "ass",
+                    "type": "asset"
+                },
+                {
+                    "name": "checkam",
+                    "type": "int64"
                 }
             ]
         },
         {
-            "name": "config",
-            "base": "",
-            "fields": [
-                {
-                    "name": "value",
-                    "type": "uint128"
-                }
-            ]
-        },
-        {
-            "name": "initcfg",
+            "name": "checkripmd",
             "base": "",
             "fields": [
                 {
                     "name": "val",
-                    "type": "uint64"
-                }
-            ]
-        },
-        {
-            "name": "sec_index_test_t",
-            "base": "",
-            "fields": [
-                {
-                    "name": "id",
-                    "type": "uint64"
+                    "type": "checksum160?"
                 },
                 {
-                    "name": "other",
-                    "type": "uint64"
-                }
-            ]
-        },
-        {
-            "name": "testmultisig",
-            "base": "",
-            "fields": [
-                {
-                    "name": "a",
-                    "type": "name"
-                },
-                {
-                    "name": "b",
-                    "type": "name"
+                    "name": "check_str",
+                    "type": "string"
                 }
             ]
         }
     ],
     "actions": [
         {
-            "name": "addsecidx",
-            "type": "addsecidx",
+            "name": "checkasset",
+            "type": "checkasset",
             "ricardian_contract": ""
         },
         {
-            "name": "initcfg",
-            "type": "initcfg",
-            "ricardian_contract": ""
-        },
-        {
-            "name": "testmultisig",
-            "type": "testmultisig",
+            "name": "checkripmd",
+            "type": "checkripmd",
             "ricardian_contract": ""
         }
     ],
-    "tables": [
-        {
-            "name": "config",
-            "type": "config",
-            "index_type": "i64",
-            "key_names": [],
-            "key_types": []
-        },
-        {
-            "name": "sectest",
-            "type": "sec_index_test_t",
-            "index_type": "i64",
-            "key_names": [],
-            "key_types": []
-        }
-    ],
+    "tables": [],
     "ricardian_clauses": [],
-    "variants": []
+    "variants": [],
+    "action_results": []
 }

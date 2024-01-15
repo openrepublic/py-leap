@@ -1,23 +1,17 @@
 #include "testcontract.hpp"
 
-void testcontract::testmultisig(name a, name b) {
-    require_auth(a);
-    require_auth(b);
-    auto entry = cfg.get_or_create(get_self(), config{0});
-    entry.value = (uint128_t)a.value + (uint128_t)b.value; 
-    cfg.set(entry, get_self());
+
+void testcontract::checkasset(const asset& ass, int64_t checkam) {
+    check(ass.is_amount_within_range(), "magnitude of asset amount must be less than 2^62" );
+    check(ass.symbol.is_valid(),        "invalid symbol name" );
+    check(ass.amount == checkam,
+          "invalid amount: " + std::to_string(ass.amount) + " " +
+          "should be: " + std::to_string(checkam));
 }
 
-void testcontract::initcfg(uint64_t val) {
-    auto entry = cfg.get_or_create(get_self(), config{0});
-    entry.value = val; 
-    cfg.set(entry, get_self());
-}
 
-void testcontract::addsecidx(uint64_t other) {
-    secidx_table test_table(get_self(), get_self().value);
-    test_table.emplace(get_self(), [&](auto& row) {
-        row.id = test_table.available_primary_key();
-        row.other = other;
-    });
+void testcontract::checkripmd(const std::optional<checksum160>& val,  const string& check_str) {
+    check(val.has_value(), "optional should have value");
+    auto hex_val = string_to_hex<20>(val->extract_as_byte_array());
+    check(hex_val == check_str, hex_val + " != " + check_str);
 }

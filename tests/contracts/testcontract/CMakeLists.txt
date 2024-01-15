@@ -1,8 +1,7 @@
 cmake_minimum_required(VERSION 3.5)
 project(test_contract VERSION 0.1.0)
-set(EOSIO_WASM_OLD_BEHAVIOR "Off")
-find_package(eosio.cdt)
-include(EosioWasmToolchain)
+find_package(cdt)
+include(CDTWasmToolchain)
 
 add_contract(testcontract testcontract testcontract.cpp)
 

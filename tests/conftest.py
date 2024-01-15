@@ -1,15 +1,38 @@
 #!/usr/bin/env python3
 
-import pytest
+import os
 
-from leap.fixtures import single_node_chain as cleos
-from leap.fixtures import multi_node_chain as multi_cleos
+from leap.sugar import is_module_installed
 
 
-@pytest.fixture(scope='session')
-def msig_contract(cleos):
-    cleos.deploy_contract_from_host(
-        'testcontract',
-        'tests/contracts/testcontract',
-    )
-    yield cleos
+if 'MANAGED_LEAP' in os.environ:
+    if not is_module_installed('docker'):
+        raise ImportError(
+            f'MANAGED_LEAP present but package docker not installed, '
+            'try reinstalling like this \"poetry install --with=nodemngr\"'
+        )
+
+    import pytest
+    from leap.fixtures import bootstrap_test_nodeos
+
+
+    @pytest.fixture(scope='module')
+    def cleos_w_bootstrap(request, tmp_path_factory):
+        request.applymarker(pytest.mark.bootstrap(True))
+        with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
+            yield cleos
+
+
+    @pytest.fixture(scope='module')
+    def cleos_w_testcontract(request, tmp_path_factory):
+        request.applymarker(
+            pytest.mark.contracts(
+                testcontract=(
+                    'tests/contracts/testcontract/testcontract.wasm',
+                    'tests/contracts/testcontract/testcontract.abi'
+                )
+            )
+        )
+
+        with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
+            yield cleos
