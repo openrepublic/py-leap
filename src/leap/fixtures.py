@@ -2,6 +2,7 @@
 
 import json
 import logging
+import subprocess
 
 from typing import Optional
 from pathlib import Path
@@ -46,7 +47,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     leap_path = leap_path.resolve()
 
     bootstrap: bool = maybe_get_marker(
-        request, 'bootstrap', 'args', False) != False
+        request, 'bootstrap', 'args', [False])[0]
 
     contracts = maybe_get_marker(
         request, 'contracts', 'kwargs', {})
@@ -77,38 +78,47 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     priv, pub = gen_key_pair()
     cmd += ['--signature-provider', f'{pub}=KEY:{priv}']
 
+    genesis_info = json.dumps({
+        'initial_timestamp': '2019-04-15T11:00:00.000',
+        'initial_key': pub,
+        'initial_configuration': {
+            'max_block_net_usage': 1048576,
+            'target_block_net_usage_pct': 1000,
+            'max_transaction_net_usage': 1048575,
+            'base_per_transaction_net_usage': 12,
+            'net_usage_leeway': 500,
+            'context_free_discount_net_usage_num': 20,
+            'context_free_discount_net_usage_den': 100,
+            'max_block_cpu_usage': 200 * 1000,
+            'target_block_cpu_usage_pct': 1000,
+            'max_transaction_cpu_usage': 150 * 1000,
+            'min_transaction_cpu_usage': 100,
+            'max_transaction_lifetime': 3600,
+            'deferred_trx_expiration_window': 600,
+            'max_transaction_delay': 3888000,
+            'max_inline_action_size': 4096,
+            'max_inline_action_depth': 4,
+            'max_authority_depth': 6
+        }
+    }, indent=4)
+
     with open(leap_path / 'genesis.json', 'w+') as genesis_file:
-        genesis_file.write(
-            json.dumps({
-                'initial_timestamp': '2019-04-15T11:00:00.000',
-                'initial_key': pub,
-                'initial_configuration': {
-                    'max_block_net_usage': 1048576,
-                    'target_block_net_usage_pct': 1000,
-                    'max_transaction_net_usage': 1048575,
-                    'base_per_transaction_net_usage': 12,
-                    'net_usage_leeway': 500,
-                    'context_free_discount_net_usage_num': 20,
-                    'context_free_discount_net_usage_den': 100,
-                    'max_block_cpu_usage': 200000,
-                    'target_block_cpu_usage_pct': 1000,
-                    'max_transaction_cpu_usage': 150000,
-                    'min_transaction_cpu_usage': 100,
-                    'max_transaction_lifetime': 3600,
-                    'deferred_trx_expiration_window': 600,
-                    'max_transaction_delay': 3888000,
-                    'max_inline_action_size': 4096,
-                    'max_inline_action_depth': 4,
-                    'max_authority_depth': 6
-                }
-            }, indent=4)
-        )
+        genesis_file.write(genesis_info)
+
+    logging.info(f'using genesis info: \n{genesis_info}')
 
     cmd += [
         '--genesis-json', '/root/genesis.json',
         '--contracts-console',
         '>>', '/root/nodeos.log', '2>&1'
     ]
+
+    container_cmd = ['/bin/bash', '-c', ' '.join(cmd)]
+
+    logging.info(f'starting nodeos container with cmd: {json.dumps(container_cmd, indent=4)}')
+
+    did_nodeos_launch = False
+
     vtestnet = get_container(
         dclient,
         container_img,
@@ -118,7 +128,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
         remove=True,
         ports={'8888/tcp': http_port},
         mounts=[Mount('/root', str(leap_path), 'bind')],
-        command=['/bin/bash', '-c', ' '.join(cmd)]
+        command=container_cmd
     )
 
     try:
@@ -180,11 +190,24 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
             cleos.deploy_contract(
                 account_name, wasm, abi, verify_hash=False)
 
+        did_nodeos_launch = True
+
         yield cleos
 
     finally:
         try:
-            vtestnet.stop()
+            if did_nodeos_launch:
+                logging.info(f'to see nodeos logs: \"less {leap_path}/nodeos.log\"')
+
+            else:
+                process = subprocess.run(
+                    ['cat', str(leap_path / 'nodeos.log')],
+                    text=True, capture_output=True
+                )
+                logging.error('seems nodeos didn\'t launch? showing logs...')
+                logging.error(process.stdout)
+
+            vtestnet.kill()
 
         except docker.errors.NotFound:
             ...
