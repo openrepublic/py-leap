@@ -17,13 +17,8 @@ if 'MANAGED_LEAP' in os.environ:
 
 
     @pytest.fixture(scope='module')
-    def cleos_w_token(request, tmp_path_factory):
-        request.applymarker(
-            pytest.mark.contracts(
-                **{'eosio.token': (
-                    'tests/contracts/eosio.token/eosio.token.wasm',
-                    'tests/contracts/eosio.token/eosio.token.abi')}))
-
+    def cleos_w_bootstrap(request, tmp_path_factory):
+        request.applymarker(pytest.mark.bootstrap(True))
         with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
             yield cleos
 

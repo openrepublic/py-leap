@@ -3,8 +3,8 @@
 from leap.sugar import random_token_symbol
 
 
-def test_create(cleos_w_token):
-    cleos = cleos_w_token
+def test_create(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     sym = random_token_symbol()
     max_supply = f'1000.000 {sym}'
@@ -19,8 +19,8 @@ def test_create(cleos_w_token):
     assert tkn_stats['issuer'] == creator
 
 
-def test_create_negative_supply(cleos_w_token):
-    cleos = cleos_w_token
+def test_create_negative_supply(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
 
     ec, res = cleos.create_token(
@@ -30,8 +30,8 @@ def test_create_negative_supply(cleos_w_token):
     assert 'max-supply must be positive' in res['error']['details'][0]['message']
 
 
-def test_symbol_exists(cleos_w_token):
-    cleos = cleos_w_token
+def test_symbol_exists(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     sym = random_token_symbol()
     max_supply = f'1000.000 {sym}'
@@ -47,8 +47,8 @@ def test_symbol_exists(cleos_w_token):
     assert 'token with symbol already exists' in res['error']['details'][0]['message']
 
 
-def test_create_max_possible(cleos_w_token):
-    cleos = cleos_w_token
+def test_create_max_possible(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     amount = (1 << 62) - 1
     sym = random_token_symbol()
@@ -64,8 +64,8 @@ def test_create_max_possible(cleos_w_token):
     assert tkn_stats['issuer'] == creator
 
 
-def test_create_max_possible_plus_one(cleos_w_token):
-    cleos = cleos_w_token
+def test_create_max_possible_plus_one(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     amount = (1 << 62)
     sym = random_token_symbol()
@@ -76,8 +76,8 @@ def test_create_max_possible_plus_one(cleos_w_token):
     assert 'error' in res
     assert 'invalid supply' in res['error']['details'][0]['message']
 
-def test_create_max_decimals(cleos_w_token):
-    cleos = cleos_w_token
+def test_create_max_decimals(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     amount = 1
     decimals = 18
@@ -95,8 +95,8 @@ def test_create_max_decimals(cleos_w_token):
     assert tkn_stats['issuer'] == creator
 
 
-def test_issue(cleos_w_token):
-    cleos = cleos_w_token
+def test_issue(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     sym = random_token_symbol()
     max_supply = f'1000.000 {sym}'
@@ -136,8 +136,8 @@ def test_issue(cleos_w_token):
     assert ec == 0
 
 
-def test_retire(cleos_w_token):
-    cleos = cleos_w_token
+def test_retire(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     sym = random_token_symbol()
     max_supply = f'1000.000 {sym}'
@@ -213,8 +213,8 @@ def test_retire(cleos_w_token):
     assert 'overdrawn balance' in res['error']['details'][0]['message']
 
 
-def test_transfer(cleos_w_token):
-    cleos = cleos_w_token
+def test_transfer(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     sym = random_token_symbol()
     max_supply = f'1000 {sym}'
@@ -256,8 +256,8 @@ def test_transfer(cleos_w_token):
     assert 'must transfer positive quantity' in res['error']['details'][0]['message']
 
 
-def test_open(cleos_w_token):
-    cleos = cleos_w_token
+def test_open(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     sym = random_token_symbol()
     max_supply = f'1000 {sym}'
@@ -313,8 +313,8 @@ def test_open(cleos_w_token):
     assert 'symbol precision mismatch' in res['error']['details'][0]['message']
 
 
-def test_close(cleos_w_token):
-    cleos = cleos_w_token
+def test_close(cleos_w_bootstrap):
+    cleos = cleos_w_bootstrap
     creator = cleos.new_account()
     sym = random_token_symbol()
     max_supply = f'1000 {sym}'
