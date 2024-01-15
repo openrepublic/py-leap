@@ -44,3 +44,5 @@ jobs:
           poetry run \
             pytest tests/test_token.py
             pytest tests/test_testcontract.py
+        env:
+          MANAGED_LEAP: true

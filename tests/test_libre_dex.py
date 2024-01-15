@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 
-
 from leap.cleos import CLEOS
 from leap.sugar import asset_from_str
 
@@ -18,4 +17,4 @@ def test_get_price():
 
     price = quant_1.to_decimal() / quant_2.to_decimal()
 
-    breakpoint()
+    assert not price.is_zero()

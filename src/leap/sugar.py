@@ -456,6 +456,19 @@ def hash_dir(target: Path, includes=[]):
     return _hash
 
 #
+# misc
+#
+
+import importlib
+
+def is_module_installed(module_name):
+    try:
+        importlib.import_module(module_name)
+        return True
+    except ImportError:
+        return False
+
+#
 # data generators for testing
 #
 
