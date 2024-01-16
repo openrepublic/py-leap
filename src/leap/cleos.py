@@ -457,6 +457,30 @@ class CLEOS:
             self.logger.error(json.dumps(res, indent=4))
             raise ContractDeployError(f'Couldn\'t deploy {account_name} contract.')
 
+    def deploy_contract_from_path(
+        self,
+        account_name: str,
+        contract_path: Union[str, Path],
+        contract_name: Optional[str] = None,
+        **kwargs
+    ):
+        if not contract_name:
+            contract_name = Path(contract_path).parts[-1]
+
+        # will fail if not found
+        contract_path = Path(contract_path).resolve()
+
+        wasm = b''
+        with open(contract_path / f'{contract_name}.wasm', 'rb') as wasm_file:
+            wasm = wasm_file.read()
+
+        abi = None
+        with open(contract_path / f'{contract_name}.abi', 'rb') as abi_file:
+            abi = Abi(json.load(abi_file))
+
+        return self.deploy_contract(
+            account_name, wasm, abi, **kwargs)
+
     def get_code(
         self,
         account_name: Union[str, Name],

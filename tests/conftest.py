@@ -25,14 +25,10 @@ if 'MANAGED_LEAP' in os.environ:
 
     @pytest.fixture(scope='module')
     def cleos_w_testcontract(request, tmp_path_factory):
-        request.applymarker(
-            pytest.mark.contracts(
-                testcontract=(
-                    'tests/contracts/testcontract/testcontract.wasm',
-                    'tests/contracts/testcontract/testcontract.abi'
-                )
-            )
-        )
+        deploy_marker = pytest.mark.contracts(
+            testcontract='tests/contracts/testcontract')
+
+        request.applymarker(deploy_marker)
 
         with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
             yield cleos

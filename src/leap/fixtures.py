@@ -178,17 +178,9 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
         else:
             cleos.wait_blocks(1)
 
-        for account_name, locations in contracts.items():
-            wasm_path, abi_path = locations
-
-            with open(wasm_path, 'rb') as wasm_file:
-                wasm = wasm_file.read()
-
-            with open(abi_path, 'r') as abi_file:
-                abi = Abi(json.loads(abi_file.read()))
-
-            cleos.deploy_contract(
-                account_name, wasm, abi, verify_hash=False)
+        for account_name, location in contracts.items():
+            cleos.deploy_contract_from_path(
+                account_name, location, verify_hash=False)
 
         did_nodeos_launch = True
 
