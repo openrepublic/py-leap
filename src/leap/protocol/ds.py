@@ -4,7 +4,6 @@
 
 import io
 import struct
-import time
 import hashlib
 import binascii
 import calendar

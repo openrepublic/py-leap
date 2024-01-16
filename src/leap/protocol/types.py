@@ -63,11 +63,37 @@ def string_to_sym_code(sym):
 
     return ret
 
+def sym_code_to_string(sym_code):
+    ret = ''
+    while sym_code != 0:
+        char_code = sym_code & 0xFF  # Extract the least significant 8 bits
+        ret += chr(char_code)  # Convert ASCII to character and append to string
+        sym_code >>= 8  # Shift right by 8 bits to process the next character
+
+    return ret[::-1]  # Reverse the string as the characters were processed in reverse order
+
+@dataclass
+class SymbolCode(ABCLeapType):
+
+    _str: str
+    value: int
+
+    def __str__(self) -> str:
+        return self._str
+
+    @staticmethod
+    def _from_str(sym: str):
+        return SymbolCode(sym, string_to_sym_code(sym))
+
+    @staticmethod
+    def _from_int(sym: int):
+        return SymbolCode(sym_code_to_string(sym), sym)
+
 
 @dataclass
 class Symbol(ABCLeapType):
 
-    code: str
+    code: SymbolCode
     precision: int
 
     @property
@@ -86,7 +112,7 @@ class Symbol(ABCLeapType):
     @staticmethod
     def _from_str(str_sym: str):
         prec, code = str_sym.split(',')
-        return Symbol(code, int(prec))
+        return Symbol(SymbolCode.from_str(code), int(prec))
 
 
 @dataclass
