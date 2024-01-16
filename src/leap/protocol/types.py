@@ -36,7 +36,7 @@ class ABCLeapType(ABC):
         else:
             raise TypeError(
                 f'Input must be an instance of {cls.__name__}'
-                ' or a string representation of {cls.__name__}'
+                f' or a string representation of {cls.__name__}'
             )
 
     @classmethod
@@ -50,7 +50,7 @@ class ABCLeapType(ABC):
         else:
             raise TypeError(
                 f'Input must be an instance of {cls.__name__}'
-                ' or a integer representation of {cls.__name__}'
+                f' or a integer representation of {cls.__name__}'
             )
 
 

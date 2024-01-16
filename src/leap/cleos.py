@@ -1240,8 +1240,8 @@ class CLEOS:
         self,
         owner: str,
         name: str,
-        net: Union[Asset, int] = 10 * (10 ** 4),
-        cpu: Union[Asset, int] = 10 * (10 ** 4),
+        net: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_SYM}',
+        cpu: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_SYM}',
         ram: int = 10_000_000,
         key: Optional[str] = None
     ) -> Tuple[int, dict]:
@@ -1263,13 +1263,6 @@ class CLEOS:
         :return: Exit code and response dictionary.
         :rtype: Tuple[int, dict]
         '''
-
-        if isinstance(net, int):
-            net = Asset(net, self.sys_token_supply.symbol)
-
-        if isinstance(cpu, int):
-            cpu = Asset(cpu, self.sys_token_supply.symbol)
-
         if not key:
             priv, pub = self.create_key_pair()
             self.import_key(name, priv)
