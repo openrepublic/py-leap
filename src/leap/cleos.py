@@ -27,17 +27,10 @@ import asks
 
 from requests.adapters import HTTPAdapter
 
-from .sugar import *
+from .sugar import random_leap_name
 from .errors import ContractDeployError
 from .tokens import DEFAULT_SYS_TOKEN_SYM
-from .protocol import (
-    gen_key_pair,
-    get_pub_key,
-    sign_tx,
-    DataStream,
-    CannonicalSignatureError,
-    get_expiration, get_tapos_info, build_push_transaction_body
-)
+from .protocol import *
 
 # disable warnings about connection retries
 logging.getLogger("urllib3").setLevel(logging.ERROR)
@@ -321,9 +314,9 @@ class CLEOS:
 
     def add_permission(
         self,
-        account: str,
-        permission: str,
-        parent: str,
+        account: Union[str, Name],
+        permission: Union[str, Name],
+        parent: Union[str, Name],
         auth: Authority
     ):
         '''Add permission to an account
@@ -340,7 +333,12 @@ class CLEOS:
         return self.push_action(
             'eosio',
             'updateauth',
-            [Name(account), Name(permission), Name(parent), auth],
+            [
+                Name.from_str(account),
+                Name.from_str(permission),
+                Name.from_str(parent),
+                auth
+            ],
             account,
         )
 
@@ -386,7 +384,7 @@ class CLEOS:
         if privileged:
             self.push_action(
                 'eosio', 'setpriv',
-                [Name(account_name), UInt8(1)],
+                [Name.from_str(account_name), UInt8(1)],
                 'eosio'
             )
 
@@ -425,7 +423,7 @@ class CLEOS:
             'account': 'eosio',
             'name': 'setcode',
             'data': [
-                Name(account_name),
+                Name.from_str(account_name),
                 UInt8(0), UInt8(0),
                 ListArgument(wasm, 'uint8')
             ],
@@ -437,7 +435,7 @@ class CLEOS:
             'account': 'eosio',
             'name': 'setabi',
             'data': [
-                Name(account_name),
+                Name.from_str(account_name),
                 abi
             ],
             'authorization': [{
@@ -468,7 +466,7 @@ class CLEOS:
             contract_name = Path(contract_path).parts[-1]
 
         # will fail if not found
-        contract_path = Path(contract_path).resolve()
+        contract_path = Path(contract_path).resolve(strict=True)
 
         wasm = b''
         with open(contract_path / f'{contract_name}.wasm', 'rb') as wasm_file:
@@ -497,17 +495,13 @@ class CLEOS:
         :rtype: Tuple[str, bytes]
         :raises Exception: If the response contains an 'error' field.
         '''
-
-        if isinstance(account_name, Name):
-            account_name = str(account_name)
-
         if not target_url:
             target_url = self.url
 
         resp_obj = self._post(
             f'{target_url}/v1/chain/get_raw_code_and_abi',
             json={
-                'account_name': account_name
+                'account_name': str(account_name)
             }
         )
 
@@ -532,17 +526,13 @@ class CLEOS:
         :rtype: :class:`leap.sugar.Abi`
         :raises Exception: If the response contains an 'error' field.
         '''
-
-        if isinstance(account_name, Name):
-            account_name = str(account_name)
-
         if not target_url:
             target_url = self.url
 
         resp = self._post(
             f'{target_url}/v1/chain/get_abi',
             json={
-                'account_name': account_name
+                'account_name': str(account_name)
             }
         ).json()
 
@@ -769,45 +759,25 @@ class CLEOS:
             assert ec == 0
 
         # load contracts wasm and abi from specified dir
-        contract_artifacts: Dict[str, Tuple[bytes, Abi]] = {}
+        contract_paths: Dict[str, Path] = {}
         for contract_dir in Path(contracts).iterdir():
-            abi_path = contract_dir / f'{contract_dir.name}.abi'
-            wasm_path = contract_dir / f'{contract_dir.name}.wasm'
-
-            if not abi_path.exists():
-                raise Exception(
-                    f'Couldn\'t find abi at {abi_path}')
-
-            if not wasm_path.exists():
-                raise Exception(
-                    f'Couldn\'t find abi at {wasm_path}')
-
-            with abi_path.open('r') as abi_file:
-                abi = Abi(json.loads(abi_file.read()))
-
-            with wasm_path.open('rb') as wasm_file:
-                wasm = wasm_file.read()
-
-            contract_artifacts[contract_dir.name] = (wasm, abi)
+            contract_paths[contract_dir.name] = contract_dir.resolve()
 
 
-        wasm, abi = contract_artifacts['eosio.token']
-        self.deploy_contract(
-            'eosio.token', wasm, abi,
+        self.deploy_contract_from_path(
+            'eosio.token', contract_paths['eosio.token'],
             staked=False,
             verify_hash=verify_hash
         )
 
-        wasm, abi = contract_artifacts['eosio.msig']
-        self.deploy_contract(
-            'eosio.msig', wasm, abi,
+        self.deploy_contract_from_path(
+            'eosio.msig', contract_paths['eosio.msig'],
             staked=False,
             verify_hash=verify_hash
         )
 
-        wasm, abi = contract_artifacts['eosio.wrap']
-        self.deploy_contract(
-            'eosio.wrap', wasm, abi,
+        self.deploy_contract_from_path(
+            'eosio.wrap', contract_paths['eosio.wrap'],
             staked=False,
             verify_hash=verify_hash
         )
@@ -816,9 +786,8 @@ class CLEOS:
 
         self.activate_feature_v1('PREACTIVATE_FEATURE')
 
-        wasm, abi = contract_artifacts['eosio.bios']
-        self.sys_deploy_info = self.deploy_contract(
-            'eosio', wasm, abi,
+        self.sys_deploy_info = self.deploy_contract_from_path(
+            'eosio', contract_paths['eosio.bios'],
             create_account=False,
             verify_hash=verify_hash
         )
@@ -828,9 +797,8 @@ class CLEOS:
 
         self.clone_node_activations(activations_node)
 
-        wasm, abi = contract_artifacts['eosio.system']
-        self.sys_deploy_info = self.deploy_contract(
-            'eosio', wasm, abi,
+        self.sys_deploy_info = self.deploy_contract_from_path(
+            'eosio', contract_paths['eosio.system'],
             create_account=False,
             verify_hash=verify_hash
         )
@@ -838,7 +806,7 @@ class CLEOS:
         ec, _ = self.push_action(
             'eosio',
             'setpriv',
-            [Name('eosio.msig'), UInt8(1)],
+            [Name.from_str('eosio.msig'), UInt8(1)],
             'eosio'
         )
         assert ec == 0
@@ -846,7 +814,7 @@ class CLEOS:
         ec, _ = self.push_action(
             'eosio',
             'setpriv',
-            [Name('eosio.wrap'), UInt8(1)],
+            [Name.from_str('eosio.wrap'), UInt8(1)],
             'eosio'
         )
         assert ec == 0
@@ -871,8 +839,8 @@ class CLEOS:
         self.create_account_staked(
             'eosio', 'telos.decide', ram=4475000)
 
-        self.deploy_contract(
-            'telos.decide', wasm, abi,
+        self.deploy_contract_from_path(
+            'telos.decide', contract_paths['telos.decide'],
             create_account=False,
             verify_hash=verify_hash
         )
@@ -1012,7 +980,7 @@ class CLEOS:
             json={}
         )
         resp = r.json()
-        assert isinstance(resp, list) 
+        assert isinstance(resp, list)
 
         for item in resp:
             if item['specification'][0]['value'] == feature_name:
@@ -1081,8 +1049,8 @@ class CLEOS:
         row = self.get_table(
             'eosio', 'eosio', 'rammarket')[0]
 
-        quote = asset_from_str(row['quote']['balance']).amount
-        base = asset_from_str(row['base']['balance']).amount
+        quote = Asset.from_str(row['quote']['balance']).amount
+        base = Asset.from_str(row['base']['balance']).amount
 
         return Asset(
             int((quote / base) * 1024 / 0.995) * (
@@ -1160,10 +1128,10 @@ class CLEOS:
 
     def push_action(
         self,
-        account: str,
-        action: str,
+        account: Union[str, Name],
+        action: Union[str, Name],
         data: Union[Dict, List[Any]],
-        actor: str,
+        actor: Union[str, Name],
         key: Optional[str] = None,
         permission: str = 'active',
         **kwargs
@@ -1260,7 +1228,7 @@ class CLEOS:
         ec, out = self.push_action(
             'eosio',
             'newaccount',
-            [Name(owner), Name(name),
+            [Name.from_str(owner), Name.from_str(name),
              Authority(1, [KeyWeight(PublicKey(pub), 1)], [], []),
              Authority(1, [KeyWeight(PublicKey(pub), 1)], [], [])],
             owner, self.private_keys[owner]
@@ -1298,6 +1266,7 @@ class CLEOS:
 
         if isinstance(net, int):
             net = Asset(net, self.sys_token_supply.symbol)
+
         if isinstance(cpu, int):
             cpu = Asset(cpu, self.sys_token_supply.symbol)
 
@@ -1312,7 +1281,7 @@ class CLEOS:
             'account': 'eosio',
             'name': 'newaccount',
             'data': [
-                Name(owner), Name(name),
+                Name.from_str(owner), Name.from_str(name),
                 Authority(1, [KeyWeight(PublicKey(pub), 1)], [], []),
                 Authority(1, [KeyWeight(PublicKey(pub), 1)], [], [])
             ],
@@ -1324,7 +1293,7 @@ class CLEOS:
             'account': 'eosio',
             'name': 'buyrambytes',
             'data': [
-                Name(owner), Name(name),
+                Name.from_str(owner), Name.from_str(name),
                 UInt32(ram)
             ],
             'authorization': [{
@@ -1335,8 +1304,8 @@ class CLEOS:
             'account': 'eosio',
             'name': 'delegatebw',
             'data': [
-                Name(owner), Name(name),
-                net, cpu, True
+                Name.from_str(owner), Name.from_str(name),
+                Asset.from_str(net), Asset.from_str(cpu), True
             ],
             'authorization': [{
                 'actor': owner,
@@ -1625,15 +1594,10 @@ class CLEOS:
         :rtype: Tuple[int, dict]
         '''
 
-        if isinstance(max_supply, str):
-            max_supply = asset_from_str(max_supply)
-        if isinstance(issuer, str):
-            issuer = Name(issuer)
-
         return self.push_action(
             token_contract,
             'create',
-            [issuer, max_supply],
+            [Name.from_str(issuer), Asset.from_str(max_supply)],
             token_contract,
             self.private_keys[token_contract],
             **kwargs
@@ -1663,15 +1627,10 @@ class CLEOS:
         :rtype: Tuple[int, dict]
         '''
 
-        if isinstance(quantity, str):
-            quantity = asset_from_str(quantity)
-        if isinstance(issuer, str):
-            issuer = Name(issuer)
-
         return self.push_action(
             token_contract,
             'issue',
-            [issuer, quantity, memo],
+            [Name.from_str(issuer), Asset.from_str(quantity), memo],
             str(issuer),
             self.private_keys[str(issuer)],
             **kwargs
@@ -1704,17 +1663,10 @@ class CLEOS:
         :rtype: Tuple[int, dict]
         '''
 
-        if isinstance(quantity, str):
-            quantity = asset_from_str(quantity)
-        if isinstance(_from, str):
-            _from = Name(_from)
-        if isinstance(_to, str):
-            _to = Name(_to)
-
         return self.push_action(
             token_contract,
             'transfer',
-            [_from, _to, quantity, memo],
+            [Name.from_str(_from), Name.from_str(_to), Asset.from_str(quantity), memo],
             str(_from),
             self.private_keys[str(_from)],
             **kwargs
@@ -1745,15 +1697,10 @@ class CLEOS:
         token_contract: str = 'eosio.token',
         **kwargs
     ) -> Tuple[int, dict]:
-        if isinstance(quantity, str):
-            quantity = asset_from_str(quantity)
-        if isinstance(issuer, str):
-            issuer = Name(issuer)
-
         return self.push_action(
             token_contract,
             'retire',
-            [quantity, memo],
+            [Asset.from_str(quantity), memo],
             str(issuer),
             self.private_keys[str(issuer)],
             **kwargs
@@ -1767,17 +1714,10 @@ class CLEOS:
         token_contract: str = 'eosio.token',
         **kwargs
     ) -> Tuple[int, dict]:
-        if isinstance(sym, str):
-            sym = symbol_from_str(sym)
-        if isinstance(owner, str):
-            owner = Name(owner)
-        if isinstance(ram_payer, str):
-            ram_payer = Name(ram_payer)
-
         return self.push_action(
             token_contract,
             'open',
-            [owner, sym, ram_payer],
+            [Name.from_str(owner), Symbol.from_str(sym), Name.from_str(ram_payer)],
             str(ram_payer),
             self.private_keys[str(ram_payer)],
             **kwargs
@@ -1790,15 +1730,10 @@ class CLEOS:
         token_contract: str = 'eosio.token',
         **kwargs
     ) -> Tuple[int, dict]:
-        if isinstance(sym, str):
-            sym = symbol_from_str(sym)
-        if isinstance(owner, str):
-            owner = Name(owner)
-
         return self.push_action(
             token_contract,
             'close',
-            [owner, sym],
+            [Name.from_str(owner), Symbol.from_str(sym)],
             str(owner),
             self.private_keys[str(owner)],
             **kwargs
@@ -1835,15 +1770,10 @@ class CLEOS:
         owner: Union[str, Name],
         quantity: Union[str, Asset]
     ):
-        if isinstance(quantity, str):
-            quantity = asset_from_str(quantity)
-        if isinstance(owner, str):
-            owner = Name(owner)
-
         return self.push_action(
             'eosio',
             'deposit',
-            [owner, quantity],
+            [Name.from_str(owner), Asset.from_str(quantity)],
             str(owner)
         )
 
@@ -1852,15 +1782,10 @@ class CLEOS:
         _from: Union[str, Name],
         quantity: Union[str, Asset]
     ):
-        if isinstance(quantity, str):
-            quantity = asset_from_str(quantity)
-        if isinstance(_from, str):
-            _from = Name(_from)
-
         return self.push_action(
             'eosio',
             'buyrex',
-            [_from, quantity],
+            [Name.from_str(_from), Asset.from_str(quantity)],
             str(_from)
         )
 
@@ -1872,19 +1797,16 @@ class CLEOS:
         cpu: Union[str, Asset],
         transfer: bool = True
     ):
-        if isinstance(_from, str):
-            _from = Name(_from)
-        if isinstance(_to, str):
-            _to = Name(_to)
-        if isinstance(net, str):
-            net = asset_from_str(net)
-        if isinstance(cpu, str):
-            cpu = asset_from_str(cpu)
-
         return self.push_action(
             'eosio',
             'delegatebw',
-            [_from, _to, net, cpu, transfer],
+            [
+                Name.from_str(_from),
+                Name.from_str(_to),
+                Asset.from_str(net),
+                Asset.from_str(cpu),
+                transfer
+            ],
             str(_from)
         )
 
@@ -1894,14 +1816,16 @@ class CLEOS:
         url: str = '',
         location: int = 0
     ):
-        if isinstance(producer, str):
-            producer = Name(producer)
-
         producer_str = str(producer)
         return self.push_action(
             'eosio',
             'regproducer',
-            [producer, PublicKey(self.keys[producer_str]), url, UInt16(location)],
+            [
+                Name.from_str(producer),
+                PublicKey(self.keys[producer_str]),
+                url,
+                UInt16(location)
+            ],
             producer_str
         )
 
@@ -1911,11 +1835,6 @@ class CLEOS:
         proxy: Union[str, Name],
         producers: List[Union[str, Name]]
     ):
-        if isinstance(voter, str):
-            voter = Name(voter)
-        if isinstance(proxy, str):
-            proxy = Name(proxy)
-
         prods = [
             str(p)
             if isinstance(p, Name) else p
@@ -1925,7 +1844,7 @@ class CLEOS:
         return self.push_action(
             'eosio',
             'voteproducer',
-            [voter, proxy, ListArgument(prods, 'name')],
+            [Name.from_str(voter), Name.from_str(proxy), ListArgument(prods, 'name')],
             str(voter)
         )
 
@@ -1933,12 +1852,10 @@ class CLEOS:
         self,
         owner: Union[str, Name]
     ):
-        if isinstance(owner, str):
-            owner = Name(owner)
         return self.push_action(
             'eosio',
             'claimrewards',
-            [owner],
+            [Name.from_str(owner)],
             str(owner)
         )
 

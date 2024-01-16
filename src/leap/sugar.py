@@ -3,109 +3,23 @@
 from __future__ import annotations
 
 import re
-import time
 import socket
 import string
 import random
 import logging
 import tarfile
 
-from typing import Any, Dict, List, Optional
-from decimal import Decimal
+from typing import Dict, Optional
 from pathlib import Path
 from hashlib import sha1
 from datetime import datetime
-from binascii import hexlify
 
 from natsort import natsorted
 
+from .protocol import Asset
+
 
 LEAP_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
-
-
-def string_to_sym_code(sym):
-    ret = 0
-    for i, char in enumerate(sym):
-        if char >= 'A' or char <= 'Z':
-            code = ord(char)
-            ret |= code << 8 * i
-
-    return ret
-
-
-class Symbol:
-
-    def __init__(self, code: str, precision: int):
-        self.code = code
-        self.precision = precision
-
-    @property
-    def unit(self) -> float:
-        return 1 / (10 ** self.precision)
-
-    def __eq__(self, other) -> bool:
-        return (
-            self.code == other.code and
-            self.precision == other.precision
-        )
-
-    def __str__(self) -> str:
-        return f'{self.precision},{self.code}'
-
-
-def symbol_from_str(str_sym: str):
-    prec, code = str_sym.split(',')
-    return Symbol(code, int(prec))
-
-
-class Asset:
-
-    def __init__(self, amount: int, symbol: Symbol):
-        self.amount = amount
-        self.symbol = symbol
-
-    def __eq__(self, other) -> bool:
-        return (
-            self.amount == other.amount and
-            self.symbol == other.symbol
-        )
-
-    def __str__(self) -> str:
-        str_amount = str(self.amount).zfill(self.symbol.precision + 1)
-        if self.symbol.precision:
-            return f'{str_amount[:-self.symbol.precision]}.{str_amount[-self.symbol.precision:]} {self.symbol.code}'
-        return f'{str_amount} {self.symbol.code}'
-
-    def to_decimal(self) -> Decimal:
-        str_amount = str(self.amount).zfill(self.symbol.precision + 1)
-        if self.symbol.precision:
-            str_amount = f'{str_amount[:-self.symbol.precision]}.{str_amount[-self.symbol.precision:]}'
-
-        return Decimal(str_amount)
-
-
-def asset_from_str(str_asset: str):
-    numeric, sym = str_asset.split(' ')
-
-    if '.' not in numeric:
-        precision = 0
-
-    else:
-        precision = len(numeric) - numeric.index('.') - 1
-        numeric = numeric.replace('.', '')
-
-    return Asset(int(numeric), Symbol(sym, precision))
-
-
-def asset_from_decimal(dec: Decimal, precision: int, sym: str):
-    result = str(dec)
-    pindex = result.index('.')
-    return f'{result[:pindex + 1 + precision]} {sym}'
-
-
-def asset_from_ints(amount: int, precision: int, sym: str):
-    result = str(amount)
-    return f'{result[:-precision]}.{result[-precision:]} {sym}'
 
 
 def leap_format_date(date: datetime) -> str:
@@ -116,122 +30,9 @@ def leap_parse_date(date: str) -> datetime:
     return datetime.strptime(date, LEAP_DATE_FORMAT)
 
 
-class Name:
-
-    def __init__(self, _str: str):
-
-        assert len(_str) <= 13
-        assert not bool(re.compile(r'[^a-z0-9.]').search(_str))
-
-        self._str = _str
-
-    def __str__(self) -> str:
-        return self._str
-
-    @property
-    def value(self) -> int:
-        """Convert name to its number repr
-        """
-
-        def str_to_hex(c):
-            hex_data = hexlify(bytearray(c, 'ascii')).decode()
-            return int(hex_data, 16)
-
-
-        def char_subtraction(a, b, add):
-            x = str_to_hex(a)
-            y = str_to_hex(b)
-            ans = str((x - y) + add)
-            if len(ans) % 2 == 1:
-                ans = '0' + ans
-            return int(ans)
-
-
-        def char_to_symbol(c):
-            ''' '''
-            if c >= 'a' and c <= 'z':
-                return char_subtraction(c, 'a', 6)
-            if c >= '1' and c <= '5':
-                return char_subtraction(c, '1', 1)
-            return 0
-
-        i = 0
-        name = 0
-        while i < len(self._str) :
-            name += (char_to_symbol(self._str[i]) & 0x1F) << (64-5 * (i + 1))
-            i += 1
-        if i > 12 :
-            name |= char_to_symbol(self._str[11]) & 0x0F
-        return name
-
-
-def name_from_value(n: int) -> Name:
-    """Convert valid leap name value to the internal representation
-    """
-    charmap = '.12345abcdefghijklmnopqrstuvwxyz'
-    name = ['.'] * 13
-    i = 0
-    while i <= 12:
-        c = charmap[n & (0x0F if i == 0 else 0x1F)]
-        name[12-i] = c
-        n >>= 4 if i == 0 else 5
-        i += 1
-    return Name(''.join(name).rstrip('.'))
-
-
-def str_to_hex(c):
-    hex_data = hexlify(bytearray(c, 'ascii')).decode()
-    return int(hex_data, 16)
-
-
-def char_subtraction(a, b, add):
-    x = str_to_hex(a)
-    y = str_to_hex(b)
-    ans = str((x - y) + add)
-    if len(ans) % 2 == 1:
-        ans = '0' + ans
-    return int(ans)
-
-
-def char_to_symbol(c):
-    ''' '''
-    if c >= 'a' and c <= 'z':
-        return char_subtraction(c, 'a', 6)
-    if c >= '1' and c <= '5':
-        return char_subtraction(c, '1', 1)
-    return 0
-
-
-def string_to_name(s: str) -> int:
-    """Convert valid leap name to its number repr
-    """
-    i = 0
-    name = 0
-    while i < len(s) :
-        name += (char_to_symbol(s[i]) & 0x1F) << (64-5 * (i + 1))
-        i += 1
-    if i > 12 :
-        name |= char_to_symbol(s[11]) & 0x0F
-    return name
-
-
-def name_to_string(n: int) -> str:
-    """Convert valid leap name to its ascii repr
-    """
-    charmap = '.12345abcdefghijklmnopqrstuvwxyz'
-    name = ['.'] * 13
-    i = 0
-    while i <= 12:
-        c = charmap[n & (0x0F if i == 0 else 0x1F)]
-        name[12-i] = c
-        n >>= 4 if i == 0 else 5
-        i += 1
-    return ''.join(name).rstrip('.')
-
-
 def find_in_balances(balances, symbol):
     for balance in balances:
-        asset = asset_from_str(balance['balance'])
+        asset = Asset.from_str(balance['balance'])
         if asset.symbol == symbol:
             return asset
 
@@ -246,145 +47,6 @@ def collect_stdout(out: Dict):
             output += action_trace['console']
 
     return output
-
-
-from msgspec import Struct
-
-
-class LeapOptional(Struct):
-    value: Any
-    type: str
-
-
-class UInt8(Struct):
-    num: int
-
-
-class UInt16(Struct):
-    num: int
-
-
-class UInt32(Struct):
-    num: int
-
-
-class UInt64(Struct):
-    num: int
-
-
-class VarUInt32(Struct):
-    num: int
-
-
-class Int8(Struct):
-    num: int
-
-
-class Int16(Struct):
-    num: int
-
-
-class Int32(Struct):
-    num: int
-
-
-class Int64(Struct):
-    num: int
-
-
-class VarInt32(Struct):
-    num: int
-
-
-class Checksum160(Struct):
-    hash: str
-
-    def __str__(self) -> str:
-        return self.hash
-
-
-class Checksum256(Struct):
-    hash: str
-
-    def __str__(self) -> str:
-        return self.hash
-
-
-class ListArgument(Struct):
-    list: List
-    type: str
-
-
-class PermissionLevel(Struct):
-    actor: str
-    permission: str
-
-    def get_dict(self) -> dict:
-        return {
-            'actor': self.actor,
-            'permission': self.permission
-        }
-
-
-class PermissionLevelWeight(Struct):
-    permission: PermissionLevel
-    weight: int
-
-    def get_dict(self) -> dict:
-        return {
-            'permission': self.permission.get_dict(),
-            'weight': self.weight
-        }
-
-
-class PublicKey(Struct):
-    key: str
-
-    def get(self) -> str:
-        return self.key
-
-
-class KeyWeight(Struct):
-    key: PublicKey
-    weight: int
-
-    def get_dict(self) -> dict:
-        return {
-            'key': self.key.get(),
-            'weight': self.weight
-        }
-
-
-class WaitWeight(Struct):
-    wait: int
-    weight: int
-
-    def get_dict(self) -> dict:
-        return {
-            'wait_sec': self.wait,
-            'weight': self.weight
-        }
-
-
-class Authority(Struct):
-    threshold: int
-    keys: List[KeyWeight]
-    accounts: List[PermissionLevelWeight]
-    waits: List[WaitWeight]
-
-    def get_dict(self) -> dict:
-        return {
-            'threshold': self.threshold,
-            'keys': [k.get_dict() for k in self.keys],
-            'accounts': [a.get_dict() for a in self.accounts],
-            'waits': [w.get_dict() for w in self.waits]
-        }
-
-class Abi(Struct):
-    abi: dict
-
-    def get_dict(self) -> dict:
-        return self.abi
 
 
 # SHA-1 hash of file
@@ -551,9 +213,8 @@ def get_container(
 def get_free_port(tries=10):
     _min = 10000
     _max = 60000
-    found = False
 
-    for i in range(tries):
+    for _ in range(tries):
         port_num = random.randint(_min, _max)
 
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)

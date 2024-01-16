@@ -17,7 +17,6 @@ from leap.protocol import gen_key_pair
 
 from .cleos import CLEOS
 from .sugar import (
-    Abi,
     get_container,
     get_free_port,
 )

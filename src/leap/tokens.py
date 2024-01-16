@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-from .sugar import Symbol
+from .protocol import Symbol
 
 
 eos_token = Symbol('EOS', 4)

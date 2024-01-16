@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import pytest
-
-from leap.sugar import Asset, Checksum160, Int64, LeapOptional, asset_from_str
+from leap.protocol import Asset, Int64, LeapOptional
 from leap.tokens import tlos_token
 
 
@@ -11,7 +9,7 @@ def test_asset(cleos_w_testcontract):
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
-        [asset_from_str('1000.0000 TLOS'),Int64(1000 * (10 ** 4))],
+        [Asset.from_str('1000.0000 TLOS'),Int64(1000 * (10 ** 4))],
         'testcontract'
     )
     assert ec == 0
@@ -19,7 +17,7 @@ def test_asset(cleos_w_testcontract):
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
-        [asset_from_str('-1000.0000 TLOS'), Int64(-1000 * (10 ** 4))],
+        [Asset.from_str('-1000.0000 TLOS'), Int64(-1000 * (10 ** 4))],
         'testcontract'
     )
     assert ec == 0
