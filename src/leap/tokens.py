@@ -3,9 +3,9 @@
 from .protocol import Symbol
 
 
-eos_token = Symbol('EOS', 4)
-tlos_token = Symbol('TLOS', 4)
+eos_token = Symbol.from_str('4,EOS')
+tlos_token = Symbol.from_str('4,TLOS')
 
-ram_token = Symbol('RAM', 0)
+ram_token = Symbol.from_str('0,RAM')
 
 DEFAULT_SYS_TOKEN_SYM = tlos_token
