@@ -29,7 +29,7 @@ from requests.adapters import HTTPAdapter
 
 from .sugar import random_leap_name
 from .errors import ContractDeployError
-from .tokens import DEFAULT_SYS_TOKEN_SYM
+from .tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
 from .protocol import *
 
 # disable warnings about connection retries
@@ -1240,8 +1240,8 @@ class CLEOS:
         self,
         owner: str,
         name: str,
-        net: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_SYM}',
-        cpu: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_SYM}',
+        net: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_CODE}',
+        cpu: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_CODE}',
         ram: int = 10_000_000,
         key: Optional[str] = None
     ) -> Tuple[int, dict]:
