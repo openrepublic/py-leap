@@ -570,7 +570,6 @@ def get_free_port(tries=10):
             return port_num
 
 
-
 def download_latest_snapshot(
     target_path: Path, network='telos', version='v6'
 ):
@@ -587,8 +586,14 @@ def download_latest_snapshot(
 
     file_path = target_path / filename
 
+    def _maybe_report_download_progress(count, block_size, total_size) -> int:
+        percent = int(count * block_size * 100 / total_size)
+
+        if percent % 10 == 0:
+            logging.info(f'{target_path}: {percent}%')
+
     # finally retrieve
-    urlretrieve(file_info.url, file_path)
+    urlretrieve(file_info.url, file_path, reporthook=_maybe_report_download_progress)
 
     dec_file_path = target_path / file_path.stem
     dctx = zstd.ZstdDecompressor()
