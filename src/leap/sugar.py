@@ -247,11 +247,13 @@ def download_latest_snapshot(
 
     file_path = target_path / filename
 
-    def _maybe_report_download_progress(count, block_size, total_size) -> int:
+    reported = []
+    def _maybe_report_download_progress(count, block_size, total_size):
         percent = int(count * block_size * 100 / total_size)
 
-        if percent % 10 == 0:
-            logging.info(f'{target_path}: {percent}%')
+        if percent % 10 == 0 and percent not in reported:
+            reported.append(percent)
+            logging.info(f'{file_path}: {percent}%')
 
     # finally retrieve
     urlretrieve(file_info.url, file_path, reporthook=_maybe_report_download_progress)
