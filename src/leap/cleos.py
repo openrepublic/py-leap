@@ -719,7 +719,8 @@ class CLEOS:
         token_sym: Symbol = DEFAULT_SYS_TOKEN_SYM,
         ram_amount: int = 16_000_000_000,
         activations_node: Optional[str] = None,
-        verify_hash: bool = False
+        verify_hash: bool = False,
+        extras: List[str] = []
     ):
         '''Boots a blockchain with required system contracts and settings.
 
@@ -835,18 +836,17 @@ class CLEOS:
         )
         assert ec == 0
 
-        # Telos specific
-        self.create_account_staked(
-            'eosio', 'telos.decide', ram=4475000)
+        if 'telos' in extras:
+            self.create_account_staked(
+                'eosio', 'telos.decide', ram=4475000)
 
-        self.deploy_contract_from_path(
-            'telos.decide', contract_paths['telos.decide'],
-            create_account=False,
-            verify_hash=verify_hash
-        )
+            self.deploy_contract_from_path(
+                'telos.decide', contract_paths['telos.decide'],
+                create_account=False,
+                verify_hash=verify_hash
+            )
 
-        for name in ['exrsrv.tf']:
-            self.create_account_staked('eosio', name)
+            self.create_account_staked('eosio', 'exrsrv.tf')
 
     # Producer API
 
@@ -1496,7 +1496,7 @@ class CLEOS:
         return self.push_action(
             'eosio',
             'buyrambytes',
-            [Name(payer), Name(receiver), UInt32(amount)],
+            [Name.from_str(payer), Name.from_str(receiver), UInt32(amount)],
             payer
         )
 

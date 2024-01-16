@@ -173,7 +173,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
 
             cleos.wait_blocks(1)
             cleos.boot_sequence(
-                contracts=download_location)
+                contracts=download_location, extras=['telos'])
         else:
             cleos.wait_blocks(1)
 
