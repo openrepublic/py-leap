@@ -10,13 +10,12 @@ Requirements:
 
 
 - `git`
-- `python` >=3.8
+- `python` >=3.9
 - `poetry` -> https://python-poetry.org/
-- `docker` (Optional: required for testing framework)
 
 ```
 
-git clone https://github.com/guilledk/py-leap.git -b v0.1a16
+git clone https://github.com/guilledk/py-leap.git -b v0.1a17
 
 cd py-leap
 

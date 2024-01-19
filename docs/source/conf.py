@@ -9,7 +9,7 @@
 project = 'py-leap'
 copyright = '2023, Guillermo Rodriguez'
 author = 'Guillermo Rodriguez'
-release = 'v0.1a16'
+release = 'v0.1a17'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration

@@ -20,11 +20,11 @@ jobs:
       - name: Setup poetry
         uses: abatilo/actions-poetry@v2
 
-#     - uses: actions/cache@v3
-#       name: Cache venv
-#       with:
-#         path: ./.venv
-#         key: venv-${{ hashFiles('poetry.lock') }}
+      - uses: actions/cache@v3
+        name: Cache venv
+        with:
+          path: ./.venv
+          key: venv-${{ hashFiles('poetry.lock') }}
 
       - name: Install with dev
         run: poetry install --with=dev
@@ -36,9 +36,6 @@ jobs:
               tests/test_libre_dex.py \
               tests/test_sugar.py
 
-      - name: Install with node manager
-        run: poetry install --with=nodemngr
-
       - name: Run end to end tests
         run: |
           poetry run \
@@ -46,6 +43,3 @@ jobs:
 
           poetry run \
             pytest tests/test_testcontract.py
-
-        env:
-          MANAGED_LEAP: true
