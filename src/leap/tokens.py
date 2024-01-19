@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
 
-from .sugar import Symbol
 
+eos_token = '4,EOS'
+tlos_token = '4,TLOS'
 
-eos_token = Symbol('EOS', 4)
-tlos_token = Symbol('TLOS', 4)
+ram_token = '0,RAM'
 
-ram_token = Symbol('RAM', 0)
-
+DEFAULT_SYS_TOKEN_CODE = 'TLOS'
 DEFAULT_SYS_TOKEN_SYM = tlos_token

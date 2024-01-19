@@ -1,8 +1,6 @@
 #!/usr/bin/env python3
 
-import pytest
-
-from leap.sugar import Asset, Checksum160, Int64, LeapOptional, asset_from_str
+from leap.protocol import Asset, Symbol
 from leap.tokens import tlos_token
 
 
@@ -11,7 +9,7 @@ def test_asset(cleos_w_testcontract):
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
-        [asset_from_str('1000.0000 TLOS'),Int64(1000 * (10 ** 4))],
+        ['1000.0000 TLOS', 1000 * (10 ** 4)],
         'testcontract'
     )
     assert ec == 0
@@ -19,25 +17,25 @@ def test_asset(cleos_w_testcontract):
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
-        [asset_from_str('-1000.0000 TLOS'), Int64(-1000 * (10 ** 4))],
+        ['-1000.0000 TLOS', -1000 * (10 ** 4)],
         'testcontract'
     )
     assert ec == 0
 
-    max_supply = Asset((1 << 62) - 1, tlos_token)
+    max_supply = Asset((1 << 62) - 1, Symbol.from_str(tlos_token))
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
-        [max_supply, Int64(max_supply.amount)],
+        [max_supply, max_supply.amount],
         'testcontract'
     )
     assert ec == 0
 
-    max_supply = Asset((1 << 62), tlos_token)
+    max_supply = Asset((1 << 62), Symbol.from_str(tlos_token))
     ec, res = cleos.push_action(
         'testcontract',
         'checkasset',
-        [max_supply, Int64(max_supply.amount)],
+        [max_supply, max_supply.amount],
         'testcontract'
     )
     assert ec == 1
@@ -51,7 +49,7 @@ def test_ripmd160(cleos_w_testcontract):
     ec, _ = cleos.push_action(
         'testcontract',
         'checkripmd',
-        [LeapOptional(test_hash, 'rd160'), test_hash],
+        [test_hash, test_hash],
         'testcontract'
     )
     assert ec == 0

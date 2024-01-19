@@ -1,19 +1,17 @@
 [tool.poetry]
 name = 'py-leap'
-version = '0.1a16'
+version = '0.1a17'
 packages = [{include = 'leap', from='src'}]
 description = ''
 authors = ['Guillermo Rodriguez <guillermo@telos.net>']
 readme = 'README.md'
 
 [tool.poetry.dependencies]
-python = '>=3.8'
+python = '>=3.9'
 asks = '^3.0.0'
 base58 = '^2.1.1'
 cryptos = '^2.0.9'
-natsort = '^8.4.0'
 requests = '^2.31.0'
-msgspec = '0.18.4'
 pdbplus = '^1.5.0'
 
 [tool.poetry.group.docs]
@@ -28,13 +26,13 @@ optional = true
 
 [tool.poetry.group.dev.dependencies]
 pytest = {version = '^7.4.2'}
+docker = {version = '^6.1.3'}
 
-[tool.poetry.group.nodemngr]
+[tool.poetry.group.snaps]
 optional = true
 
-[tool.poetry.group.nodemngr.dependencies]
+[tool.poetry.group.snaps.dependencies]
 bs4 = {version = '^0.0.1'}
-docker = {version = '^6.1.3'}
 zstandard = {version = '^0.21.0'}
 
 [tool.pytest.ini_options]
