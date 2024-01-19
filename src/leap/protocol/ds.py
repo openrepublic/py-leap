@@ -563,7 +563,7 @@ class DataStream():
 
     def unpack_error_message(self):
         return OrderedDict([
-            ("error_code", self.unpack_uin64()),
+            ("error_code", self.unpack_uint64()),
             ("error_msg", self.unpack_string()),
         ])
 
@@ -899,7 +899,7 @@ def endian_reverse_u32(x):
            | (((x >> 0x08) & 0xFF) << 0x10) \
            | (((x) & 0xFF) << 0x18)
 
-def get_tapos_info(block_id):
+def get_tapos_info(block_id) -> tuple[int, int]:
     block_id_bin = bytes.fromhex(block_id)
 
     hash0 = struct.unpack("<Q", block_id_bin[0:8])[0]

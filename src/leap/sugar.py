@@ -9,7 +9,6 @@ import random
 import logging
 import tarfile
 
-from typing import Dict, Optional
 from pathlib import Path
 from hashlib import sha1
 from datetime import datetime
@@ -116,19 +115,6 @@ def hash_dir(target: Path, includes=[]):
 
     _hash = hasher.hexdigest()
     return _hash
-
-#
-# misc
-#
-
-import importlib
-
-def is_module_installed(module_name):
-    try:
-        importlib.import_module(module_name)
-        return True
-    except ImportError:
-        return False
 
 #
 # data generators for testing
@@ -274,8 +260,6 @@ def download_latest_snapshot(
 import os
 import tarfile
 import logging
-from pathlib import Path
-from typing import Optional
 
 def download_with_progress_bar(url: str, file_path: Path) -> None:
     try:
@@ -301,7 +285,7 @@ def download_snapshot(
     target_path: Path, block_number: int,
     network: str = 'mainnet', progress: bool = False,
     force_download: bool = False
-) -> Optional[Path]:
+) -> Path | None:
     """Download the closest snapshot for a given block number.
 
     Args:
@@ -312,7 +296,7 @@ def download_snapshot(
         force_download (bool, optional): Whether to force download even if the file exists. Defaults to False.
 
     Returns:
-        Optional[Path]: The path to the downloaded snapshot, or None if not found.
+        Path | None: The path to the downloaded snapshot, or None if not found.
     """
     from bs4 import BeautifulSoup
     from urllib.request import urlretrieve

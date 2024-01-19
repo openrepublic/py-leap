@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 
+# 3.9 compat
 from __future__ import annotations
 from dataclasses import dataclass
 
-import re
-
 from abc import ABC, abstractmethod
-from typing import Any, List
 from decimal import Decimal
 from binascii import hexlify
 
@@ -96,15 +94,13 @@ class Symbol(ABCLeapType):
     code: SymbolCode
     precision: int
 
+    def __post_init__(self):
+        if isinstance(self.code, str):
+            self.code = SymbolCode.from_str(self.code)
+
     @property
     def unit(self) -> float:
         return 1 / (10 ** self.precision)
-
-    def __eq__(self, other) -> bool:
-        return (
-            self.code == other.code and
-            self.precision == other.precision
-        )
 
     def __str__(self) -> str:
         return f'{self.precision},{self.code}'
@@ -121,11 +117,9 @@ class Asset(ABCLeapType):
     amount: int
     symbol: Symbol
 
-    def __eq__(self, other) -> bool:
-        return (
-            self.amount == other.amount and
-            self.symbol == other.symbol
-        )
+    def __post_init__(self):
+        if isinstance(self.symbol, str):
+            self.symbol = Symbol.from_str(self.symbol)
 
     def __str__(self) -> str:
         str_amount = str(self.amount).zfill(self.symbol.precision + 1)
@@ -165,65 +159,7 @@ class Asset(ABCLeapType):
         return Asset._from_str(f'{result} {sym}')
 
 
-class Name(ABCLeapType):
-
-    _str: str
-    _value: int
-
-    def __init__(self, _str: str, _value: int):
-        assert len(_str) <= 13
-        assert not bool(re.compile(r'[^a-z0-9.]').search(_str))
-
-        self._str = _str
-        self._value = _value
-
-    def __str__(self) -> str:
-        return self._str
-
-    def __int__(self) -> int:
-        return self._value
-
-    @staticmethod
-    def str_to_int_name(s: str) -> int:
-        """Convert name to its number repr
-        """
-        i = 0
-        name = 0
-        while i < len(s) :
-            name += (char_to_symbol(s[i]) & 0x1F) << (64-5 * (i + 1))
-            i += 1
-
-        if i > 12 :
-            name |= char_to_symbol(s[11]) & 0x0F
-
-        return name
-
-    @staticmethod
-    def _from_int(n: int) -> Name:
-        charmap = '.12345abcdefghijklmnopqrstuvwxyz'
-        name = ['.'] * 13
-        i = 0
-        while i <= 12:
-            c = charmap[n & (0x0F if i == 0 else 0x1F)]
-            name[12-i] = c
-            n >>= 4 if i == 0 else 5
-            i += 1
-
-        str_name = ''.join(name).rstrip('.')
-
-        return Name(str_name, n)
-
-    @staticmethod
-    def _from_str(s: str) -> Name:
-        i = 0
-        int_name = 0
-        while i < len(s):
-            int_name += (char_to_symbol(s[i]) & 0x1F) << (64-5 * (i + 1))
-            i += 1
-        if i > 12:
-            int_name |= char_to_symbol(s[11]) & 0x0F
-        return Name(s, int_name)
-
+# name helpers
 
 def str_to_hex(c):
     hex_data = hexlify(bytearray(c, 'ascii')).decode()
@@ -249,158 +185,40 @@ def char_to_symbol(c):
 
 
 @dataclass
-class LeapOptional:
-    value: Any
-    type: str
+class Name(ABCLeapType):
 
-
-@dataclass
-class UInt8:
-    num: int
-
-
-@dataclass
-class UInt16:
-    num: int
-
-
-@dataclass
-class UInt32:
-    num: int
-
-
-@dataclass
-class UInt64:
-    num: int
-
-
-@dataclass
-class VarUInt32:
-    num: int
-
-
-@dataclass
-class Int8:
-    num: int
-
-
-@dataclass
-class Int16:
-    num: int
-
-
-@dataclass
-class Int32:
-    num: int
-
-
-@dataclass
-class Int64:
-    num: int
-
-
-@dataclass
-class VarInt32:
-    num: int
-
-
-@dataclass
-class Checksum160:
-    hash: str
+    _str: str
 
     def __str__(self) -> str:
-        return self.hash
+        return self._str
 
+    def __int__(self) -> int:
+        s = self._str
+        i = 0
+        int_name = 0
+        while i < len(s):
+            int_name += (char_to_symbol(s[i]) & 0x1F) << (64-5 * (i + 1))
+            i += 1
+        if i > 12:
+            int_name |= char_to_symbol(s[11]) & 0x0F
 
-@dataclass
-class Checksum256:
-    hash: str
+        return int_name
 
-    def __str__(self) -> str:
-        return self.hash
+    @staticmethod
+    def _from_int(n: int) -> Name:
+        charmap = '.12345abcdefghijklmnopqrstuvwxyz'
+        name = ['.'] * 13
+        i = 0
+        while i <= 12:
+            c = charmap[n & (0x0F if i == 0 else 0x1F)]
+            name[12-i] = c
+            n >>= 4 if i == 0 else 5
+            i += 1
 
+        str_name = ''.join(name).rstrip('.')
 
-@dataclass
-class ListArgument:
-    list: List
-    type: str
+        return Name(str_name)
 
-
-@dataclass
-class PermissionLevel:
-    actor: str
-    permission: str
-
-    def get_dict(self) -> dict:
-        return {
-            'actor': self.actor,
-            'permission': self.permission
-        }
-
-
-@dataclass
-class PermissionLevelWeight:
-    permission: PermissionLevel
-    weight: int
-
-    def get_dict(self) -> dict:
-        return {
-            'permission': self.permission.get_dict(),
-            'weight': self.weight
-        }
-
-
-@dataclass
-class PublicKey:
-    key: str
-
-    def get(self) -> str:
-        return self.key
-
-
-@dataclass
-class KeyWeight:
-    key: PublicKey
-    weight: int
-
-    def get_dict(self) -> dict:
-        return {
-            'key': self.key.get(),
-            'weight': self.weight
-        }
-
-
-@dataclass
-class WaitWeight:
-    wait: int
-    weight: int
-
-    def get_dict(self) -> dict:
-        return {
-            'wait_sec': self.wait,
-            'weight': self.weight
-        }
-
-
-@dataclass
-class Authority:
-    threshold: int
-    keys: List[KeyWeight]
-    accounts: List[PermissionLevelWeight]
-    waits: List[WaitWeight]
-
-    def get_dict(self) -> dict:
-        return {
-            'threshold': self.threshold,
-            'keys': [k.get_dict() for k in self.keys],
-            'accounts': [a.get_dict() for a in self.accounts],
-            'waits': [w.get_dict() for w in self.waits]
-        }
-
-
-@dataclass
-class Abi:
-    abi: dict
-
-    def get_dict(self) -> dict:
-        return self.abi
+    @staticmethod
+    def _from_str(s: str) -> Name:
+        return Name(s)

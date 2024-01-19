@@ -4,7 +4,6 @@ import json
 import logging
 import subprocess
 
-from typing import Optional
 from pathlib import Path
 from contextlib import contextmanager
 
@@ -130,45 +129,51 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
         command=container_cmd
     )
 
+    # maybe init contract cache dir
+    download_location = Path('tests/contracts')
+    download_location.mkdir(exist_ok=True, parents=True)
+
+    def maybe_download_contract(
+        account_name: str,
+        local_name: str | None = None
+    ):
+        if not local_name:
+            local_name = account_name
+
+        logging.info(f'maybe download {local_name}')
+
+
+        abi = cleos.get_abi(account_name, target_url=cleos.remote_endpoint)
+        cleos.load_abi(account_name, abi)
+
+        contract_loc = download_location / local_name
+        if contract_loc.is_dir():
+            logging.info('...skip already downloaded.')
+            return
+
+        else:
+            logging.info('downloading...')
+            contract_loc.mkdir()
+
+        cleos.download_contract(
+            account_name, contract_loc,
+            target_url=cleos.remote_endpoint,
+            local_name=local_name,
+            abi=abi
+        )
+        logging.info('done.')
+
     try:
         cleos = CLEOS(url=f'http://127.0.0.1:{http_port}')
 
         cleos.import_key('eosio', priv)
 
+        maybe_download_contract('eosio', local_name='eosio.system')
+
         if bootstrap:
-            # maybe download sys contracts
-            download_location = Path('tests/contracts')
-            download_location.mkdir(exist_ok=True, parents=True)
-
-            def maybe_download_contract(
-                account_name: str,
-                local_name: Optional[str] = None
-            ):
-                if not local_name:
-                    local_name = account_name
-
-                logging.info(f'maybe download {local_name}')
-
-                contract_loc = download_location / local_name
-                if contract_loc.is_dir():
-                    logging.info('...skip already downloaded.')
-                    return
-
-                else:
-                    logging.info('downloading...')
-                    contract_loc.mkdir()
-
-                cleos.download_contract(
-                    account_name, contract_loc,
-                    target_url=cleos.remote_endpoint,
-                    local_name=local_name
-                )
-                logging.info('done.')
-
             maybe_download_contract('eosio.token')
             maybe_download_contract('eosio.msig')
             maybe_download_contract('eosio.wrap')
-            maybe_download_contract('eosio', local_name='eosio.system')
             maybe_download_contract('telos.decide')
 
             cleos.wait_blocks(1)

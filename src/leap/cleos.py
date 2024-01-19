@@ -9,14 +9,6 @@ import requests
 import binascii
 
 from copy import deepcopy
-from typing import (
-    Any,
-    Dict,
-    List,
-    Union,
-    Tuple,
-    Optional
-)
 from urllib3.util.retry import Retry
 from pathlib import Path
 from hashlib import sha256
@@ -63,9 +55,11 @@ class CLEOS:
         self.endpoint = url
         self.remote_endpoint = remote
 
-        self.keys: Dict[str, str] = {}
-        self.private_keys: Dict[str, str] = {}
-        self._key_to_acc: Dict[str, List[str]] = {}
+        self.keys: dict[str, str] = {}
+        self.private_keys: dict[str, str] = {}
+        self._key_to_acc: dict[str, list[str]] = {}
+
+        self._loaded_abis: dict[str, dict] = {}
 
         self._sys_token_init = False
         self.sys_token_supply = Asset(0, DEFAULT_SYS_TOKEN_SYM)
@@ -96,98 +90,66 @@ class CLEOS:
     async def _apost(self, *args, **kwargs):
         return await self._asession.post(*args, **kwargs)
 
-    def _pack_action_data(self, action: dict) -> str:
+    def _pack_abi_data(self, action: dict) -> str:
         ds = DataStream()
+        account = action['account']
+        name = action['name']
         data = action['data']
 
-        if isinstance(data, dict):
-            value_iter = data.values()
+        abi = self.get_loaded_abi(account)
 
-        elif isinstance(data, list):
-            value_iter = data
+        assert 'structs' in abi
+
+        struct = [s for s in abi['structs'] if s['name'] == action['name']]
+
+        assert len(struct) == 1
+
+        struct = struct[0]
+        struct_fields = {f['name']: f['type'] for f in struct['fields']}
+
+        if isinstance(data, list):
+            key_iter = iter(struct_fields.keys())
+            value_iter = iter(data)
 
         else:
-            raise ValueError(f'type {type(data)} not supported for data argument')
+            raise TypeError(f'only list is supported as action params container')
 
-        for val in value_iter:
-            if isinstance(val, str):
-                ds.pack_string(val)
+        for _ in range(len(data)):
+            field_name = next(key_iter)
+            value = next(value_iter)
 
-            elif isinstance(val, int):
-                ds.pack_uint64(val)
+            assert field_name in struct_fields
+            typ = struct_fields.get(field_name, None)
+            assert typ
 
-            elif isinstance(val, Abi):
+            fn_name = typ
+            pack_params = [value]
+
+            if typ[-2:] == '[]':
+                fn_name = 'array'
+                pack_params = [typ[:-2], value]
+
+            elif typ[-1] == '?':
+                fn_name = 'optional'
+                pack_params = [typ[:-1], value]
+
+            elif typ[-1] == '$':
+                pack_params = [typ[:-1], value]
+
+            elif (account == 'eosio' and
+                  name =='setabi' and
+                  field_name == 'abi'):
+
                 abi_raw = DataStream()
-                abi_raw.pack_abi(val.get_dict())
-                ds.pack_bytes(abi_raw.getvalue())
+                abi_raw.pack_abi(value)
+                pack_params = [abi_raw.getvalue()]
+                fn_name = 'bytes'
 
-            elif isinstance(val, bool):
-                ds.pack_bool(val)
+            elif typ in ['name', 'asset', 'symbol']:
+                pack_params = [str(value)]
 
-            elif isinstance(val, Name):
-                ds.pack_name(str(val))
-
-            elif isinstance(val, bytes):
-                ds.pack_bytes(val)
-
-            elif isinstance(val, Int8):
-                ds.pack_int8(val.num)
-
-            elif isinstance(val, Int16):
-                ds.pack_int16(val.num)
-
-            elif isinstance(val, Int32):
-                ds.pack_int32(val.num)
-
-            elif isinstance(val, Int64):
-                ds.pack_int64(val.num)
-
-            elif isinstance(val, UInt8):
-                ds.pack_uint8(val.num)
-
-            elif isinstance(val, UInt16):
-                ds.pack_uint16(val.num)
-
-            elif isinstance(val, UInt32):
-                ds.pack_uint32(val.num)
-
-            elif isinstance(val, UInt64):
-                ds.pack_uint64(val.num)
-
-            elif isinstance(val, Asset):
-                ds.pack_asset(str(val))
-
-            elif isinstance(val, Symbol):
-                ds.pack_symbol(str(val))
-
-            elif isinstance(val, LeapOptional):
-                opt_val = val
-                ds.pack_optional(opt_val.type, opt_val.value)
-
-            elif isinstance(val, PublicKey):
-                ds.pack_public_key(val.get())
-
-            elif isinstance(val, VarInt32):
-                ds.pack_varuint32(val.num)
-
-            elif isinstance(val, VarUInt32):
-                ds.pack_varuint32(val.num)
-
-            elif isinstance(val, Authority):
-                ds.pack_authority(val.get_dict())
-
-            elif isinstance(val, Checksum160):
-                ds.pack_rd160(val.hash)
-
-            elif isinstance(val, Checksum256):
-                ds.pack_checksum256(str(val))
-
-            elif isinstance(val, ListArgument):
-                ds.pack_array(val.type, val.list)
-
-            else:
-                raise ValueError(
-                    f'datastream packing not implemented for {type(val)}')
+            pack_fn = getattr(ds, f'pack_{fn_name}')
+            pack_fn(*pack_params)
 
         return binascii.hexlify(
             ds.getvalue()).decode('utf-8')
@@ -216,11 +178,11 @@ class CLEOS:
 
             # package transation
             for i, action in enumerate(tx['actions']):
-                tx['actions'][i]['data'] = self._pack_action_data(action)
+                tx['actions'][i]['data'] = self._pack_abi_data(action)
 
             tx.update({
                 'expiration': get_expiration(
-                    datetime.utcnow(), timedelta(minutes=15).total_seconds()),
+                    datetime.utcnow(), int(timedelta(minutes=15).total_seconds())),
                 'ref_block_num': ref_block_num,
                 'ref_block_prefix': ref_block_prefix,
                 'max_net_usage_words': max_net_usage_words,
@@ -268,7 +230,7 @@ class CLEOS:
         self,
         account: str,
         action: str,
-        data: dict,
+        data: list,
         actor: str,
         key: str,
         permission: str = 'active',
@@ -281,19 +243,19 @@ class CLEOS:
         :param action: smart contract action name
         :type action: str
         :param data: action data
-        :type data: dict
+        :type data: list
         :param key: private key used to sign
         :type key: str
         :param permission: permission name
         :type permission: str
         '''
         return await self._a_create_and_push_tx([{
-            'account': str(account),
-            'name': str(action),
+            'account': account,
+            'name': action,
             'data': data,
             'authorization': [{
-                'actor': str(actor),
-                'permission': str(permission)
+                'actor': actor,
+                'permission': permission
             }]
         }], key, **kwargs)
 
@@ -314,10 +276,10 @@ class CLEOS:
 
     def add_permission(
         self,
-        account: Union[str, Name],
-        permission: Union[str, Name],
-        parent: Union[str, Name],
-        auth: Authority
+        account: str,
+        permission: str,
+        parent: str,
+        auth: dict
     ):
         '''Add permission to an account
 
@@ -328,15 +290,15 @@ class CLEOS:
         :param parent: parent account name
         :type parent: str
         :param auth: authority schema
-        :type auth: :class:`leap.sugar.Authority`
+        :type auth: dict
         '''
         return self.push_action(
             'eosio',
             'updateauth',
             [
-                Name.from_str(account),
-                Name.from_str(permission),
-                Name.from_str(parent),
+                account,
+                permission,
+                parent,
                 auth
             ],
             account,
@@ -346,7 +308,7 @@ class CLEOS:
         self,
         account_name: str,
         wasm: bytes,
-        abi: Abi,
+        abi: dict,
         privileged: bool = False,
         create_account: bool = True,
         staked: bool = True,
@@ -358,8 +320,8 @@ class CLEOS:
         :type account_name: str
         :param wasm: Raw wasm as bytearray
         :type wasm: bytes
-        :param abi: Abi already wrapped on our custom Abi type
-        :type abi: :class:`leap.sugar.Abi`
+        :param abi: Json abi as dict
+        :type abi: dict
         :param privileged: ``True`` if contract should be privileged (system
             contracts).
         :type privileged: bool
@@ -384,7 +346,7 @@ class CLEOS:
         if privileged:
             self.push_action(
                 'eosio', 'setpriv',
-                [Name.from_str(account_name), UInt8(1)],
+                [account_name, 1],
                 'eosio'
             )
 
@@ -393,13 +355,15 @@ class CLEOS:
         ec, _ = self.add_permission(
             account_name,
             'active', 'owner',
-            Authority(
-                1,
-                [KeyWeight(PublicKey(self.keys[account_name]), 1)],
-                [PermissionLevelWeight(
-                    PermissionLevel(account_name, 'eosio.code'), 1)],
-                []
-            )
+            {
+                'threshold': 1,
+                'keys': [{'key': self.keys[account_name], 'weight': 1}],
+                'accounts': [{
+                    'permission': {'actor': account_name, 'permission': 'eosio.code'},
+                    'weight': 1
+                }],
+                'waits': []
+            }
         )
         assert ec == 0
         self.logger.info('gave eosio.code permissions')
@@ -417,15 +381,18 @@ class CLEOS:
                     f'local: {local_shasum}\n'
                     f'remote: {remote_shasum}')
 
+        self.logger.info(f'loading abi...')
+        self.load_abi(account_name, abi)
+
         self.logger.info('deploy...')
 
         actions = [{
             'account': 'eosio',
             'name': 'setcode',
             'data': [
-                Name.from_str(account_name),
-                UInt8(0), UInt8(0),
-                ListArgument(wasm, 'uint8')
+                account_name,
+                0, 0,
+                wasm
             ],
             'authorization': [{
                 'actor': account_name,
@@ -435,7 +402,7 @@ class CLEOS:
             'account': 'eosio',
             'name': 'setabi',
             'data': [
-                Name.from_str(account_name),
+                account_name,
                 abi
             ],
             'authorization': [{
@@ -458,8 +425,8 @@ class CLEOS:
     def deploy_contract_from_path(
         self,
         account_name: str,
-        contract_path: Union[str, Path],
-        contract_name: Optional[str] = None,
+        contract_path: str | Path,
+        contract_name: str | None = None,
         **kwargs
     ):
         if not contract_name:
@@ -474,25 +441,24 @@ class CLEOS:
 
         abi = None
         with open(contract_path / f'{contract_name}.abi', 'rb') as abi_file:
-            abi = Abi(json.load(abi_file))
+            abi = json.load(abi_file)
 
         return self.deploy_contract(
             account_name, wasm, abi, **kwargs)
 
     def get_code(
         self,
-        account_name: Union[str, Name],
-        target_url: Optional[str] = None
-    ) -> Tuple[str, bytes]:
+        account_name: str,
+        target_url: str | None = None
+    ) -> tuple[str, bytes]:
         '''Fetches and decodes the WebAssembly (WASM) code for a given account.
 
-        :param account_name: Account to get the WASM code for, can be a string
-            or a :class:`leap.sugar.Abi` object.
-        :type account_name: Union[str, :class:`leap.sugar.Abi`]
+        :param account_name: Account to get the WASM code for
+        :type account_name: str
         :param target_url: The URL to fetch the WASM code from. Defaults to `self.url`.
-        :type target_url: Optional[str]
+        :type target_url: str | None
         :return: A tuple containing the hash and the decoded WASM code.
-        :rtype: Tuple[str, bytes]
+        :rtype: tuple[str, bytes]
         :raises Exception: If the response contains an 'error' field.
         '''
         if not target_url:
@@ -501,7 +467,7 @@ class CLEOS:
         resp_obj = self._post(
             f'{target_url}/v1/chain/get_raw_code_and_abi',
             json={
-                'account_name': str(account_name)
+                'account_name': account_name
             }
         )
 
@@ -515,15 +481,15 @@ class CLEOS:
 
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: Union[str, Name], target_url: Optional[str] = None) -> Abi:
+    def get_abi(self, account_name: str, target_url: str | None = None) -> dict:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
-        :param account_name: Account to get the ABI for, can be a string or a :class:`leap.sugar.Name` object.
-        :type account_name: Union[str, :class:`leap.sugar.Name`]
+        :param account_name: Account to get the ABI for
+        :type account_name: str
         :param target_url: The URL to fetch the ABI from. Defaults to `self.url`.
-        :type target_url: Optional[str]
-        :return: An instance of :class:`leap.sugar.Abi` containing the ABI data.
-        :rtype: :class:`leap.sugar.Abi`
+        :type target_url: str | None
+        :return: An dictionary containing the ABI data.
+        :rtype: dict
         :raises Exception: If the response contains an 'error' field.
         '''
         if not target_url:
@@ -532,14 +498,27 @@ class CLEOS:
         resp = self._post(
             f'{target_url}/v1/chain/get_abi',
             json={
-                'account_name': str(account_name)
+                'account_name': account_name
             }
         ).json()
 
         if 'error' in resp:
             raise Exception(resp)
 
-        return Abi(resp['abi'])
+        return resp['abi']
+
+    def load_abi(self, account: str, abi: dict):
+        self._loaded_abis[account] = abi
+
+    def load_abi_file(self, account: str, abi_path: str | Path):
+        with open(abi_path, 'rb') as abi_file:
+            self.load_abi(account, json.load(abi_file))
+
+    def get_loaded_abi(self, account: str) -> dict:
+        if account not in self._loaded_abis:
+            raise ValueError(f'ABI for {account} not loaded!')
+
+        return self._loaded_abis[account]
 
     def create_snapshot(self, target_url: str, body: dict):
         '''Initiates a snapshot of the AntelopeIO blockchain at the given URL.
@@ -576,13 +555,13 @@ class CLEOS:
         )
         return resp
 
-    def get_node_activations(self, target_url: str) -> List[Dict]:
+    def get_node_activations(self, target_url: str) -> list[dict]:
         '''Fetches a list of activated protocol features from the AntelopeIO blockchain at the given URL.
 
         :param target_url: The URL to fetch the activated protocol features from.
         :type target_url: str
         :return: A list of dictionaries, each representing an activated protocol feature.
-        :rtype: List[Dict]
+        :rtype: list[dict]
         '''
 
         lower_bound = 0
@@ -633,7 +612,7 @@ class CLEOS:
         actions = [{
             'account': 'eosio',
             'name': 'activate',
-            'data': [Checksum256(f['feature_digest'])],
+            'data': [f['feature_digest']],
             'authorization': [{
                 'actor': 'eosio',
                 'permission': 'active'
@@ -654,7 +633,7 @@ class CLEOS:
         :param target_two: The URL of the second node to compare.
         :type target_two: str
         :return: A list of feature names activated in `target_one` but not in `target_two`.
-        :rtype: List[str]
+        :rtype: list[str]
         '''
 
         features_one = self.get_node_activations(target_one)
@@ -673,21 +652,22 @@ class CLEOS:
 
     def download_contract(
         self,
-        account_name: Union[str, Name],
-        download_location: Union[str, Path],
-        target_url: Optional[str] = None,
-        local_name: Optional[str] = None
+        account_name: str,
+        download_location: str | Path,
+        target_url: str | None = None,
+        local_name: str | None = None,
+        abi: dict | None = None
     ):
         '''Downloads the smart contract associated with a given account.
 
         :param account_name: The name of the account holding the smart contract.
-        :type account_name: Union[str, :class:`leap.sugar.Name`]
+        :type account_name: str
         :param download_location: The directory where the contract will be downloaded.
-        :type download_location: Union[str, Path]
+        :type download_location: str | Path
         :param target_url: Optional URL to a specific node. Defaults to the node set in the client.
-        :type target_url: Optional[str]
+        :type target_url: str | None
         :param local_name: Optional name for the downloaded contract files. Defaults to `account_name`.
-        :type local_name: Optional[str]
+        :type local_name: str | None
 
         :raises: Custom exceptions based on download failure.
 
@@ -701,37 +681,39 @@ class CLEOS:
             target_url = self.url
 
         if not local_name:
-            local_name = str(account_name)
+            local_name = account_name
 
         _, wasm = self.get_code(account_name, target_url=target_url)
-        abi = self.get_abi(account_name, target_url=target_url)
+
+        if not abi:
+            abi = self.get_abi(account_name, target_url=target_url)
 
         with open(download_location / f'{local_name}.wasm', 'wb+') as wasm_file:
             wasm_file.write(wasm)
 
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
-            abi_file.write(json.dumps(abi.get_dict()))
+            abi_file.write(json.dumps(abi))
 
 
     def boot_sequence(
         self,
-        contracts: Union[str, Path] = 'tests/contracts',
-        token_sym: Symbol = DEFAULT_SYS_TOKEN_SYM,
+        contracts: str | Path = 'tests/contracts',
+        token_sym: str = DEFAULT_SYS_TOKEN_SYM,
         ram_amount: int = 16_000_000_000,
-        activations_node: Optional[str] = None,
+        activations_node: str | None = None,
         verify_hash: bool = False,
-        extras: List[str] = []
+        extras: list[str] = []
     ):
         '''Boots a blockchain with required system contracts and settings.
 
         :param contracts: Path to directory containing compiled contract artifacts. Defaults to 'tests/contracts'.
-        :type contracts: Union[str, Path]
+        :type contracts: str | Path
         :param token_sym: System token symbol. Defaults to :const:`DEFAULT_SYS_TOKEN_SYM`.
-        :type token_sym: :class:`leap.sugar.Symbol`
+        :type token_sym: str
         :param ram_amount: Initial RAM allocation for system. Defaults to 16,000,000,000.
         :type ram_amount: int
         :param activations_node: Endpoint to clone protocol features from. Defaults to None, using `self.remote_endpoint`.
-        :type activations_node: Optional[str]
+        :type activations_node: str | None
         :param verify_hash: Whether to verify contract hash after deployment. Defaults to False.
         :type verify_hash: bool
 
@@ -760,7 +742,7 @@ class CLEOS:
             assert ec == 0
 
         # load contracts wasm and abi from specified dir
-        contract_paths: Dict[str, Path] = {}
+        contract_paths: dict[str, Path] = {}
         for contract_dir in Path(contracts).iterdir():
             contract_paths[contract_dir.name] = contract_dir.resolve()
 
@@ -807,7 +789,7 @@ class CLEOS:
         ec, _ = self.push_action(
             'eosio',
             'setpriv',
-            [Name.from_str('eosio.msig'), UInt8(1)],
+            ['eosio.msig', 1],
             'eosio'
         )
         assert ec == 0
@@ -815,7 +797,7 @@ class CLEOS:
         ec, _ = self.push_action(
             'eosio',
             'setpriv',
-            [Name.from_str('eosio.wrap'), UInt8(1)],
+            ['eosio.wrap', 1],
             'eosio'
         )
         assert ec == 0
@@ -823,7 +805,7 @@ class CLEOS:
         ec, _ = self.push_action(
             'eosio',
             'init',
-            [VarUInt32(0), token_sym],
+            [0, token_sym],
             'eosio'
         )
         assert ec == 0
@@ -831,7 +813,7 @@ class CLEOS:
         ec, _ = self.push_action(
             'eosio',
             'setram',
-            [UInt64(ram_amount)],
+            [ram_amount],
             'eosio'
         )
         assert ec == 0
@@ -912,22 +894,22 @@ class CLEOS:
             f'{self.url}/v1/net/disconnect',
             json=endpoint).json()
 
-    def create_key_pair(self) -> Tuple[str, str]:
+    def create_key_pair(self) -> tuple[str, str]:
         '''Generates a key pair.
 
         :return: Private and public keys.
-        :rtype: Tuple[str, str]
+        :rtype: tuple[str, str]
         '''
         priv, pub = gen_key_pair()
         return priv, pub
 
-    def create_key_pairs(self, n: int) -> List[Tuple[str, str]]:
+    def create_key_pairs(self, n: int) -> list[tuple[str, str]]:
         '''Generates multiple key pairs.
 
         :param n: Number of key pairs to generate.
         :type n: int
-        :return: List of generated private and public keys.
-        :rtype: List[Tuple[str, str]]
+        :return: list of generated private and public keys.
+        :rtype: list[tuple[str, str]]
         '''
         keys = []
         for _ in range(n):
@@ -1011,15 +993,12 @@ class CLEOS:
 
         self.logger.info(f'{feature_name} -> {digest} active.')
 
-    def activate_feature_with_digest(self, digest: Union[str, Checksum256]):
+    def activate_feature_with_digest(self, digest: str):
         '''Activates a feature using its digest.
 
         :param digest: Feature digest.
-        :type digest: Union[str, :class:`leap.sugar.Checksum256`]
+        :type digest: str
         '''
-        if isinstance(digest, str):
-            digest = Checksum256(digest)
-
         ec, _ = self.push_action(
             'eosio',
             'activate',
@@ -1043,8 +1022,8 @@ class CLEOS:
 
         This function queries the `eosio.rammarket` table and calculates the RAM price based on the quote and base balances.
 
-        :return: Current RAM price as an :class:`leap.sugar.Asset` object.
-        :rtype: :class:`leap.sugar.Asset`
+        :return: Current RAM price as an :class:`leap.protocol.Asset` object.
+        :rtype: :class:`leap.protocol.Asset`
         '''
         row = self.get_table(
             'eosio', 'eosio', 'rammarket')[0]
@@ -1062,13 +1041,18 @@ class CLEOS:
         actions: list[dict],
         key: str,
         max_cpu_usage_ms=255,
-        max_net_usage_words=0
+        max_net_usage_words=0,
+        push: bool = True
     ) -> dict:
-        chain_info = self.get_info()
-        ref_block_num, ref_block_prefix = get_tapos_info(
-            chain_info['last_irreversible_block_id'])
+        chain_id: str
+        ref_block_num: int = 0
+        ref_block_prefix: int = 0
+        if push:
+            chain_info = self.get_info()
+            ref_block_num, ref_block_prefix = get_tapos_info(
+                chain_info['last_irreversible_block_id'])
 
-        chain_id = chain_info['chain_id']
+            chain_id = chain_info['chain_id']
 
         res = None
         retries = 2
@@ -1081,7 +1065,7 @@ class CLEOS:
 
             # package transation
             for i, action in enumerate(tx['actions']):
-                tx['actions'][i]['data'] = self._pack_action_data(action)
+                tx['actions'][i]['data'] = self._pack_abi_data(action)
 
             tx.update({
                 'expiration': get_expiration(
@@ -1095,6 +1079,9 @@ class CLEOS:
                 'transaction_extensions': [],
                 'context_free_data': []
             })
+
+            if not push:
+                return tx
 
             # Sign transaction
             _, signed_tx = sign_tx(chain_id, tx, key)
@@ -1128,14 +1115,15 @@ class CLEOS:
 
     def push_action(
         self,
-        account: Union[str, Name],
-        action: Union[str, Name],
-        data: Union[Dict, List[Any]],
-        actor: Union[str, Name],
-        key: Optional[str] = None,
+        account: str,
+        action: str,
+        data: list[str | int | bool | bytes | dict | list],
+        actor: str,
+        key: str | None = None,
         permission: str = 'active',
+        push: bool = True,
         **kwargs
-    ) -> Tuple[int, dict]:
+    ) -> tuple[int, dict] | dict:
         '''Pushes a single action to the blockchain.
 
         :param account: The account to which the action belongs.
@@ -1143,30 +1131,33 @@ class CLEOS:
         :param action: The action name.
         :type action: str
         :param data: The action data.
-        :type data: Union[Dict, List[Any]]
+        :type data: list[str | int | bool | bytes | dict | list]
         :param actor: The authorizing account.
         :type actor: str
         :param key: The private key for signing. Defaults to actor's private key.
-        :type key: Optional[str]
+        :type key: str | None
         :param permission: Permission level for the action. Defaults to 'active'.
         :type permission: str
 
         :return: Exit code and response dictionary.
-        :rtype: Tuple[int, dict]
+        :rtype: tuple[int, dict]
         '''
 
         if not key:
             key = self.private_keys[actor]
 
         res = self._create_and_push_tx([{
-            'account': str(account),
-            'name': str(action),
+            'account': account,
+            'name': action,
             'data': data,
             'authorization': [{
-                'actor': str(actor),
-                'permission': str(permission)
+                'actor': actor,
+                'permission': permission
             }]
-        }], key, **kwargs)
+        }], key, push=push, **kwargs)
+
+        if not push:
+            return res
 
         if 'error' in res:
             self.logger.error(json.dumps(res, indent=4))
@@ -1182,13 +1173,13 @@ class CLEOS:
     ):
         '''Pushes multiple actions to the blockchain in a single transaction.
 
-        :param actions: List of action dictionaries.
+        :param actions: list of action dictionaries.
         :type actions: list[dict]
         :param key: The private key for signing.
         :type key: str
 
         :return: Exit code and response dictionary.
-        :rtype: Tuple[int, dict]
+        :rtype: tuple[int, dict]
         '''
 
         res = self._create_and_push_tx(actions, key, **kwargs)
@@ -1203,7 +1194,7 @@ class CLEOS:
         self,
         owner: str,
         name: str,
-        key: Optional[str] = None,
+        key: str | None = None,
     ):
         '''Creates a new blockchain account.
 
@@ -1212,10 +1203,10 @@ class CLEOS:
         :param name: The new account name.
         :type name: str
         :param key: Public key to be assigned to new account. Defaults to a newly created key.
-        :type key: Optional[str]
+        :type key: str | None
 
         :return: Exit code and response dictionary.
-        :rtype: Tuple[int, dict]
+        :rtype: tuple[int, dict]
         '''
         if not key:
             priv, pub = self.create_key_pair()
@@ -1228,9 +1219,9 @@ class CLEOS:
         ec, out = self.push_action(
             'eosio',
             'newaccount',
-            [Name.from_str(owner), Name.from_str(name),
-             Authority(1, [KeyWeight(PublicKey(pub), 1)], [], []),
-             Authority(1, [KeyWeight(PublicKey(pub), 1)], [], [])],
+            [owner, name,
+             {'threshold': 1, 'keys': [{'key': pub, 'weight': 1}], 'accounts': [], 'waits': []},
+             {'threshold': 1, 'keys': [{'key': pub, 'weight': 1}], 'accounts': [], 'waits': []}],
             owner, self.private_keys[owner]
         )
         assert ec == 0
@@ -1240,28 +1231,28 @@ class CLEOS:
         self,
         owner: str,
         name: str,
-        net: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_CODE}',
-        cpu: Union[Asset, str] = f'10.0000 {DEFAULT_SYS_TOKEN_CODE}',
+        net: str = f'10.0000 {DEFAULT_SYS_TOKEN_CODE}',
+        cpu: str = f'10.0000 {DEFAULT_SYS_TOKEN_CODE}',
         ram: int = 10_000_000,
-        key: Optional[str] = None
-    ) -> Tuple[int, dict]:
+        key: str | None = None
+    ) -> tuple[int, dict]:
         '''Creates a new staked blockchain account.
 
         :param owner: The account that will own the new account.
         :type owner: str
         :param name: The new account name.
         :type name: str
-        :param net: Amount of NET to stake. Defaults to 10 * 10^4.
-        :type net: Union[:class:`leap.sugar.Asset`, int]
-        :param cpu: Amount of CPU to stake. Defaults to 10 * 10^4.
-        :type cpu: Union[:class:`leap.sugar.Asset`, int]
+        :param net: Amount of NET to stake. Defaults to \"10.0000 TLOS\".
+        :type net: str 
+        :param cpu: Amount of CPU to stake. Defaults to \"10.0000 TLOS\".
+        :type cpu: str 
         :param ram: Amount of RAM to buy in bytes. Defaults to 10,000,000.
         :type ram: int
         :param key: Public key to be assigned to new account. Defaults to a newly created key.
-        :type key: Optional[str]
+        :type key: str | None
 
         :return: Exit code and response dictionary.
-        :rtype: Tuple[int, dict]
+        :rtype: tuple[int, dict]
         '''
         if not key:
             priv, pub = self.create_key_pair()
@@ -1274,9 +1265,9 @@ class CLEOS:
             'account': 'eosio',
             'name': 'newaccount',
             'data': [
-                Name.from_str(owner), Name.from_str(name),
-                Authority(1, [KeyWeight(PublicKey(pub), 1)], [], []),
-                Authority(1, [KeyWeight(PublicKey(pub), 1)], [], [])
+                owner, name,
+                {'threshold': 1, 'keys': [{'key': pub, 'weight': 1}], 'accounts': [], 'waits': []},
+                {'threshold': 1, 'keys': [{'key': pub, 'weight': 1}], 'accounts': [], 'waits': []}
             ],
             'authorization': [{
                 'actor': owner,
@@ -1286,8 +1277,7 @@ class CLEOS:
             'account': 'eosio',
             'name': 'buyrambytes',
             'data': [
-                Name.from_str(owner), Name.from_str(name),
-                UInt32(ram)
+                owner, name, ram
             ],
             'authorization': [{
                 'actor': owner,
@@ -1297,8 +1287,8 @@ class CLEOS:
             'account': 'eosio',
             'name': 'delegatebw',
             'data': [
-                Name.from_str(owner), Name.from_str(name),
-                Asset.from_str(net), Asset.from_str(cpu), True
+                owner, name,
+                net, cpu, True
             ],
             'authorization': [{
                 'actor': owner,
@@ -1317,7 +1307,7 @@ class CLEOS:
         scope: str,
         table: str,
         **kwargs
-    ) -> List[Dict]:
+    ) -> list[dict]:
         """Get table rows from the blockchain.
 
         :param account: Account name of contract were table is located.
@@ -1327,8 +1317,8 @@ class CLEOS:
             docs <https://developers.eos.io/manuals/eos/latest/cleos/command-ref
             erence/get/table>`_).
 
-        :return: List of rows matching query.
-        :rtype: List[Dict]
+        :return: list of rows matching query.
+        :rtype: list[dict]
         """
 
         done = False
@@ -1343,8 +1333,9 @@ class CLEOS:
         while not done:
             resp = self._post(f'{self.url}/v1/chain/get_table_rows', json=params).json()
             if 'code' in resp and resp['code'] != 200:
-                self.logger.critical(json.dumps(resp, indent=4))
-                assert False
+                resp = json.dumps(resp, indent=4)
+                self.logger.critical(resp)
+                raise BaseException(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
             rows.extend(resp['rows'])
@@ -1360,23 +1351,15 @@ class CLEOS:
         scope: str,
         table: str,
         **kwargs
-    ) -> List[Dict]:
+    ) -> list[dict]:
         done = False
         rows = []
-        _kwargs = dict(kwargs)
-        for key, arg in kwargs.items():
-            if (isinstance(arg, Name) or
-                isinstance(arg, Asset) or
-                isinstance(arg, Symbol) or
-                isinstance(arg, Checksum256)):
-                _kwargs[key] = str(arg)
-
         params = {
             'code': str(account),
             'scope': str(scope),
             'table': str(table),
             'json': True,
-            **_kwargs
+            **kwargs
         }
         while not done:
             resp = (await self._apost(f'{self.url}/v1/chain/get_table_rows', json=params)).json()
@@ -1392,7 +1375,7 @@ class CLEOS:
 
         return rows
 
-    def get_info(self) -> Dict[str, Union[str, int]]:
+    def get_info(self) -> dict[str, str | int]:
         '''Get blockchain statistics.
 
             - ``server_version``
@@ -1405,13 +1388,13 @@ class CLEOS:
             - ``participation_rate``
 
         :return: A dictionary with blockchain information.
-        :rtype: Dict[str, Union[str, int]]
+        :rtype: dict[str, str | int]
         '''
         resp = self._get(f'{self.url}/v1/chain/get_info')
         assert resp.status_code == 200
         return resp.json()
 
-    async def a_get_info(self) -> Dict[str, Union[str, int]]:
+    async def a_get_info(self) -> dict[str, str | int]:
         '''Get blockchain statistics.
 
             - ``server_version``
@@ -1424,26 +1407,26 @@ class CLEOS:
             - ``participation_rate``
 
         :return: A dictionary with blockchain information.
-        :rtype: Dict[str, Union[str, int]]
+        :rtype: dict[str, str | int]
         '''
         resp = await self._aget(f'{self.url}/v1/chain/get_info')
         assert resp.status_code == 200
         return resp.json()
 
-    def get_resources(self, account: str) -> List[Dict]:
+    def get_resources(self, account: str) -> list[dict]:
         '''Get account resources.
 
         :param account: Name of account to query resources.
 
         :return: A list with a single dictionary which contains, resource info.
-        :rtype: List[Dict]
+        :rtype: list[dict]
         '''
 
         return self.get_table('eosio', account, 'userres')
 
     def new_account(
         self,
-        name: Optional[str] = None,
+        name: str | None = None,
         owner: str = 'eosio',
         **kwargs
     ) -> str:
@@ -1468,8 +1451,8 @@ class CLEOS:
         self,
         payer: str,
         amount: int,
-        receiver: Optional[str] = None
-    ) -> Tuple[int, dict]:
+        receiver: str | None = None
+    ):
         '''Buys a specific amount of RAM in bytes.
 
         :param payer: Account responsible for the payment.
@@ -1477,10 +1460,10 @@ class CLEOS:
         :param amount: Amount of RAM to purchase in bytes.
         :type amount: int
         :param receiver: Account that receives the RAM. Defaults to `payer`.
-        :type receiver: Optional[str]
+        :type receiver: str | None
 
-        :return: Action result as an Tuple[int, dict] object.
-        :rtype: Tuple[int, dict]
+        :return: Action result as an tuple[int, dict] object.
+        :rtype: tuple[int, dict]
         '''
 
         if not receiver:
@@ -1489,7 +1472,7 @@ class CLEOS:
         return self.push_action(
             'eosio',
             'buyrambytes',
-            [Name.from_str(payer), Name.from_str(receiver), UInt32(amount)],
+            [payer, receiver, amount],
             payer
         )
 
@@ -1520,7 +1503,7 @@ class CLEOS:
         self,
         sym: str,
         token_contract: str = 'eosio.token'
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         '''Get token statistics.
 
         :param sym: Token symbol.
@@ -1528,7 +1511,7 @@ class CLEOS:
 
         :return: A dictionary with ``\'supply\'``, ``\'max_supply\'`` and
             ``\'issuer\'`` as keys.
-        :rtype: Dict[str, str]
+        :rtype: dict[str, str]
         '''
 
         return self.get_table(
@@ -1541,7 +1524,7 @@ class CLEOS:
         self,
         account: str,
         token_contract: str = 'eosio.token'
-    ) -> Optional[str]:
+    ) -> str | None:
         '''Get account balance.
 
         :param account: Account to query.
@@ -1549,7 +1532,7 @@ class CLEOS:
 
         :return: Account balance in asset form, ``None`` if user has no balance
             entry.
-        :rtype: Optional[str]
+        :rtype: str | None
         '''
 
         balances = self.get_table(
@@ -1568,29 +1551,29 @@ class CLEOS:
 
     def create_token(
         self,
-        issuer: Union[str, Name],
-        max_supply: Union[str, Asset],
+        issuer: str,
+        max_supply: str,
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> Tuple[int, dict]:
+    ):
         '''Creates a new token contract.
 
         :param issuer: Account authorized to issue and manage the token.
-        :type issuer: Union[str, :class:`leap.sugar.Name`]
+        :type issuer: str
         :param max_supply: Maximum supply for the token.
-        :type max_supply: Union[str, :class:`leap.sugar.Asset`]
+        :type max_supply: str
         :param token_contract: Name of the token contract, defaults to 'eosio.token'.
         :type token_contract: str
         :param kwargs: Additional keyword arguments.
 
-        :return: Tuple containing error code and response.
-        :rtype: Tuple[int, dict]
+        :return: tuple containing error code and response.
+        :rtype: tuple[int, dict]
         '''
 
         return self.push_action(
             token_contract,
             'create',
-            [Name.from_str(issuer), Asset.from_str(max_supply)],
+            [issuer, max_supply],
             token_contract,
             self.private_keys[token_contract],
             **kwargs
@@ -1598,85 +1581,84 @@ class CLEOS:
 
     def issue_token(
         self,
-        issuer: Union[str, Name],
-        quantity: Union[str, Asset],
+        issuer: str,
+        quantity: str,
         memo: str,
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> Tuple[int, dict]:
+    ):
         '''Issues tokens to the issuer account.
 
         :param issuer: Account authorized to issue the token.
-        :type issuer: Union[str, :class:`leap.sugar.Name`]
+        :type issuer: str
         :param quantity: Amount of tokens to issue.
-        :type quantity: Union[str, :class:`leap.sugar.Asset`]
+        :type quantity: str
         :param memo: Memo for the issued tokens.
         :type memo: str
         :param token_contract: Name of the token contract, defaults to 'eosio.token'.
         :type token_contract: str
         :param kwargs: Additional keyword arguments.
 
-        :return: Tuple containing error code and response.
-        :rtype: Tuple[int, dict]
+        :return: tuple containing error code and response.
+        :rtype: tuple[int, dict]
         '''
 
         return self.push_action(
             token_contract,
             'issue',
-            [Name.from_str(issuer), Asset.from_str(quantity), memo],
-            str(issuer),
-            self.private_keys[str(issuer)],
+            [issuer, quantity, memo],
+            issuer,
+            self.private_keys[issuer],
             **kwargs
         )
 
     def transfer_token(
         self,
-        _from: Union[str, Name],
-        _to: Union[str, Name],
-        quantity: Union[str, Asset],
+        _from: str,
+        _to: str,
+        quantity: str,
         memo: str = '',
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> Tuple[int, dict]:
+    ):
         '''Transfers tokens from one account to another.
 
         :param _from: Sender account.
-        :type _from: Union[str, :class:`leap.sugar.Name`]
+        :type _from: str
         :param _to: Receiver account.
-        :type _to: Union[str, :class:`leap.sugar.Name`]
+        :type _to: str
         :param quantity: Amount of tokens to transfer.
-        :type quantity: Union[str, :class:`leap.sugar.Asset`]
+        :type quantity: str
         :param memo: Optional memo for the transaction.
         :type memo: str
         :param token_contract: Name of the token contract, defaults to 'eosio.token'.
         :type token_contract: str
         :param kwargs: Additional keyword arguments.
 
-        :return: Tuple containing error code and response.
-        :rtype: Tuple[int, dict]
+        :return: tuple containing error code and response.
+        :rtype: tuple[int, dict]
         '''
-
         return self.push_action(
             token_contract,
             'transfer',
-            [Name.from_str(_from), Name.from_str(_to), Asset.from_str(quantity), memo],
-            str(_from),
-            self.private_keys[str(_from)],
+            [_from, _to, quantity, memo],
+            _from,
+            self.private_keys[_from],
             **kwargs
         )
 
     def give_token(
         self,
-        _to: Union[str, Name],
-        quantity: Union[str, Asset],
+        _to: str,
+        quantity: str,
         memo: str = '',
         token_contract='eosio.token',
         **kwargs
-    ) -> Tuple[int, dict]:
+    ):
         return self.transfer_token(
             'eosio',
             _to,
-            str(quantity),
+            quantity,
             memo,
             token_contract=token_contract,
             **kwargs
@@ -1684,58 +1666,58 @@ class CLEOS:
 
     def retire_token(
         self,
-        issuer: Union[str, Name],
-        quantity: Union[str, Asset],
+        issuer: str,
+        quantity: str,
         memo: str = '',
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> Tuple[int, dict]:
+    ):
         return self.push_action(
             token_contract,
             'retire',
-            [Asset.from_str(quantity), memo],
-            str(issuer),
-            self.private_keys[str(issuer)],
+            [quantity, memo],
+            issuer,
+            self.private_keys[issuer],
             **kwargs
         )
 
     def open_token(
         self,
-        owner: Union[str, Name],
-        sym: Union[str, Symbol],
-        ram_payer: Union[str, Name],
+        owner: str,
+        sym: str,
+        ram_payer: str,
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> Tuple[int, dict]:
+    ):
         return self.push_action(
             token_contract,
             'open',
-            [Name.from_str(owner), Symbol.from_str(sym), Name.from_str(ram_payer)],
-            str(ram_payer),
-            self.private_keys[str(ram_payer)],
+            [owner, sym, ram_payer],
+            ram_payer,
+            self.private_keys[ram_payer],
             **kwargs
         )
 
     def close_token(
         self,
-        owner: Union[str, Name],
-        sym: Union[str, Symbol],
+        owner: str,
+        sym: str,
         token_contract: str = 'eosio.token',
         **kwargs
-    ) -> Tuple[int, dict]:
+    ):
         return self.push_action(
             token_contract,
             'close',
-            [Name.from_str(owner), Symbol.from_str(sym)],
-            str(owner),
-            self.private_keys[str(owner)],
+            [owner, sym],
+            owner,
+            self.private_keys[owner],
             **kwargs
         )
 
 
     def init_sys_token(
         self,
-        token_sym: Symbol = DEFAULT_SYS_TOKEN_SYM,
+        token_sym: str = DEFAULT_SYS_TOKEN_SYM,
         token_amount: int = 420_000_000 * (10 ** 4)
     ):
         '''Initialize ``SYS`` token.
@@ -1760,96 +1742,89 @@ class CLEOS:
 
     def rex_deposit(
         self,
-        owner: Union[str, Name],
-        quantity: Union[str, Asset]
+        owner: str,
+        quantity: str
     ):
         return self.push_action(
             'eosio',
             'deposit',
-            [Name.from_str(owner), Asset.from_str(quantity)],
-            str(owner)
+            [owner, quantity],
+            owner
         )
 
     def rex_buy(
         self,
-        _from: Union[str, Name],
-        quantity: Union[str, Asset]
+        _from: str,
+        quantity: str
     ):
         return self.push_action(
             'eosio',
             'buyrex',
-            [Name.from_str(_from), Asset.from_str(quantity)],
-            str(_from)
+            [_from, quantity],
+            _from
         )
 
     def delegate_bandwidth(
         self,
-        _from: Union[str, Name],
-        _to: Union[str, Name],
-        net: Union[str, Asset],
-        cpu: Union[str, Asset],
+        _from: str,
+        _to: str,
+        net: str,
+        cpu: str,
         transfer: bool = True
     ):
         return self.push_action(
             'eosio',
             'delegatebw',
             [
-                Name.from_str(_from),
-                Name.from_str(_to),
-                Asset.from_str(net),
-                Asset.from_str(cpu),
+                _from,
+                _to,
+                net,
+                cpu,
                 transfer
             ],
-            str(_from)
+            _from
         )
 
     def register_producer(
         self,
-        producer: Union[str, Name],
+        producer: str,
         url: str = '',
         location: int = 0
     ):
-        producer_str = str(producer)
         return self.push_action(
             'eosio',
             'regproducer',
             [
-                Name.from_str(producer),
-                PublicKey(self.keys[producer_str]),
+                producer,
+                self.keys[producer],
                 url,
-                UInt16(location)
+                location
             ],
-            producer_str
+            producer
         )
 
     def vote_producers(
         self,
-        voter: Union[str, Name],
-        proxy: Union[str, Name],
-        producers: List[Union[str, Name]]
+        voter: str,
+        proxy: str,
+        producers: list[str]
     ):
-        prods = [
-            str(p)
-            if isinstance(p, Name) else p
-            for p in producers
-        ]
-
         return self.push_action(
             'eosio',
             'voteproducer',
-            [Name.from_str(voter), Name.from_str(proxy), ListArgument(prods, 'name')],
-            str(voter)
+            [voter, proxy, producers],
+            voter
         )
 
     def claim_rewards(
         self,
-        owner: Union[str, Name]
+        owner: str
     ):
         return self.push_action(
             'eosio',
             'claimrewards',
-            [Name.from_str(owner)],
-            str(owner)
+            [owner],
+            owner
         )
 
     def get_schedule(self):
@@ -1864,8 +1839,8 @@ class CLEOS:
     def get_producers(self):
         '''Fetches information on producers.
 
-        :return: List of dictionaries containing producer information.
-        :rtype: List[Dict]
+        :return: list of dictionaries containing producer information.
+        :rtype: list[dict]
         '''
         return self.get_table(
             'eosio',
@@ -1873,14 +1848,14 @@ class CLEOS:
             'producers'
         )
 
-    def get_producer(self, producer: str) -> Optional[Dict]:
+    def get_producer(self, producer: str) -> dict | None:
         '''Fetches information on a specific producer.
 
         :param producer: The name of the producer to query.
         :type producer: str
 
-        :return: Dictionary containing producer information, or None if not found.
-        :rtype: Optional[Dict]
+        :return: dictionary containing producer information, or None if not found.
+        :rtype: dict | None
         '''
 
         rows = self.get_table(
@@ -1894,11 +1869,11 @@ class CLEOS:
         else:
             return rows[0]
 
-    def get_payrate(self) -> Optional[Dict]:
+    def get_payrate(self) -> dict | None:
         '''Fetches the current payrate.
 
-        :return: Dictionary containing payrate information, or None if not found.
-        :rtype: Optional[Dict]
+        :return: dictionary containing payrate information, or None if not found.
+        :rtype: dict | None
         '''
         rows = self.get_table(
             'eosio', 'eosio', 'payrate')
