@@ -53,3 +53,26 @@ def test_ripmd160(cleos_w_testcontract):
         'testcontract'
     )
     assert ec == 0
+
+
+def test_extended_asset(cleos_w_testcontract):
+    cleos = cleos_w_testcontract
+    ec, res = cleos.push_action(
+        'testcontract',
+        'checkexasset',
+        ['1000.000000000 PUSDT@swap.libre', 'swap.libre', 1000 * (10 ** 9)],
+        'testcontract'
+    )
+    assert ec == 0
+
+    ec, res = cleos.push_action(
+        'testcontract',
+        'checkexasset',
+        [
+            {'quantity': '420.000000000 PUSDT', 'contract': 'swap.libre'},
+            'swap.libre',
+            420 * (10 ** 9)
+        ],
+        'testcontract'
+    )
+    assert ec == 0

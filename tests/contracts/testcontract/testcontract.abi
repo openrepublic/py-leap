@@ -18,6 +18,24 @@
             ]
         },
         {
+            "name": "checkexasset",
+            "base": "",
+            "fields": [
+                {
+                    "name": "eass",
+                    "type": "extended_asset"
+                },
+                {
+                    "name": "contract",
+                    "type": "name"
+                },
+                {
+                    "name": "checkam",
+                    "type": "int64"
+                }
+            ]
+        },
+        {
             "name": "checkripmd",
             "base": "",
             "fields": [
@@ -36,6 +54,11 @@
         {
             "name": "checkasset",
             "type": "checkasset",
+            "ricardian_contract": ""
+        },
+        {
+            "name": "checkexasset",
+            "type": "checkexasset",
             "ricardian_contract": ""
         },
         {

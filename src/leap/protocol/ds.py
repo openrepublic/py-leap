@@ -616,8 +616,8 @@ class DataStream():
         ret |= precision
         return self.pack_uint64(ret)
 
-    def unpack_symbol(self, v):
-        v = self.unpack_uint64(v)
+    def unpack_symbol(self):
+        v = self.unpack_uint64()
         precision = v & 0xFF
         v >>= 8
         return f"{precision},{uint64_to_symbol_code(v)}"
@@ -639,7 +639,15 @@ class DataStream():
         return f"{amount},{symbol}"
 
     def pack_extended_asset(self, v):
-        raise Exception("not implementd")
+        if isinstance(v, str):
+            quant, contract =  v.split('@')
+
+        else:
+            quant = v['quantity']
+            contract = v['contract']
+
+        self.pack_asset(quant)
+        self.pack_name(contract)
 
     def unpack_extended_asset(self):
         return OrderedDict([
