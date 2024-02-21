@@ -946,7 +946,7 @@ class CannonicalSignatureError(BaseException):
     ...
 
 
-def sign_hash(h, pk, max_retries=10):
+def sign_hash(h, pk, max_retries=100):
     nonce = 0
     while nonce < max_retries:
         v, r, s = ecdsa_raw_sign_nonce(h, pk, nonce)
