@@ -149,12 +149,7 @@ class CLEOS:
         error = res.get('error', None)
         if error is not None:
             logging.error(json.dumps(error, indent=4))
-            what = error['what']
-            details = ''
-            if len(error['details']) > 0:
-                details = error['details'][0]['message']
-
-            raise TransactionPushError(f'{what}, details: {details}')
+            raise TransactionPushError.from_json(error)
 
         return res
 
@@ -188,12 +183,7 @@ class CLEOS:
         error = res.get('error', None)
         if error is not None:
             logging.error(json.dumps(error, indent=4))
-            what = error['what']
-            details = ''
-            if len(error['details']) > 0:
-                details = error['details'][0]['message']
-
-            raise TransactionPushError(f'{what}, details: {details}')
+            raise TransactionPushError.from_json(error)
 
         return res
 
