@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
 
-class ContractDeployError(Exception):
+class ContractDeployError(BaseException):
+    ...
+
+
+class TransactionPushError(BaseException):
     ...

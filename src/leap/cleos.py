@@ -1042,7 +1042,8 @@ class CLEOS:
         key: str,
         max_cpu_usage_ms=255,
         max_net_usage_words=0,
-        push: bool = True
+        push: bool = True,
+        retries: int = 2
     ) -> dict:
         chain_id: str
         ref_block_num: int = 0
@@ -1054,8 +1055,8 @@ class CLEOS:
 
             chain_id = chain_info['chain_id']
 
-        res = None
-        retries = 2
+        tx = {}
+        res = {}
         while retries > 0:
             tx = {
                 'delay_sec': 0,
@@ -1105,13 +1106,15 @@ class CLEOS:
                 continue
 
             else:
-                break
+                return res
 
         if not res:
-            ValueError('res is None')
+            err = TransactionPushError('Couldn\'t get a response for tx')
+            logging.error(err.message + ': ')
+            logging.error(json.dumps(tx, indent=4))
+            raise err
 
         return res
-
 
     def push_action(
         self,
