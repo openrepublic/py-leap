@@ -20,7 +20,7 @@ import asks
 from requests.adapters import HTTPAdapter
 
 from .sugar import random_leap_name
-from .errors import ContractDeployError
+from .errors import ContractDeployError, TransactionPushError
 from .tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
 from .protocol import *
 
@@ -41,19 +41,15 @@ class CLEOS:
 
     def __init__(
         self,
-        url: str = 'http://127.0.0.1:8888',
-        remote: str = 'https://mainnet.telos.net',
+        endpoint: str = 'http://127.0.0.1:8888',
         logger = None
     ):
-        self.url = url
-
         if logger is None:
             self.logger = logging.getLogger('cleos')
         else:
             self.logger = logger
 
-        self.endpoint = url
-        self.remote_endpoint = remote
+        self.endpoint = endpoint
 
         self.keys: dict[str, str] = {}
         self.private_keys: dict[str, str] = {}
@@ -75,164 +71,182 @@ class CLEOS:
         self._session.mount('http://', adapter)
         self._session.mount('https://', adapter)
 
-        if 'asks' in sys.modules:
-            self._asession = asks.Session(connections=200)
+        self._asession = asks.Session(connections=200)
+
+    # local abi store methods
+
+    def load_abi(self, account: str, abi: dict):
+        self._loaded_abis[account] = abi
+
+    def load_abi_file(self, account: str, abi_path: str | Path):
+        with open(abi_path, 'rb') as abi_file:
+            self.load_abi(account, json.load(abi_file))
+
+    def get_loaded_abi(self, account: str) -> dict:
+        if account not in self._loaded_abis:
+            raise ValueError(f'ABI for {account} not loaded!')
+
+        return self._loaded_abis[account]
+
+    # generic http+session handlers
+
+    def _session_method(
+        self,
+        method: str,
+        route: str,
+        *args,
+        base_route: str | None = None,
+        is_async: bool = False,
+        **kwargs
+    ):
+        if not isinstance(base_route, str):
+            base_route = self.endpoint
+
+        session = self._asession if is_async else self._session
+        return getattr(session, method)(base_route + route, *args, **kwargs)
 
     def _get(self, *args, **kwargs):
-        return self._session.get(*args, **kwargs)
+        return self._session_method('get', *args, **kwargs)
 
     def _post(self, *args, **kwargs):
-        return self._session.post(*args, **kwargs)
+        return self._session_method('post', *args, **kwargs)
 
-    async def _aget(self, *args, **kwargs):
-        return await self._asession.get(*args, **kwargs)
+    # tx send machinery
 
-    async def _apost(self, *args, **kwargs):
-        return await self._asession.post(*args, **kwargs)
+    def _get_abis_for_actions(self, actions: list[dict]) -> dict[str, dict]:
+        return {
+            action['account']: self.get_loaded_abi(action['account'])
+            for action in actions
+        }
 
-    def _pack_abi_data(self, action: dict) -> str:
-        ds = DataStream()
-        account = action['account']
-        name = action['name']
-        data = action['data']
-
-        abi = self.get_loaded_abi(account)
-
-        assert 'structs' in abi
-
-        struct = [s for s in abi['structs'] if s['name'] == action['name']]
-
-        assert len(struct) == 1
-
-        struct = struct[0]
-        struct_fields = {f['name']: f['type'] for f in struct['fields']}
-
-        if isinstance(data, list):
-            key_iter = iter(struct_fields.keys())
-            value_iter = iter(data)
-
-        else:
-            raise TypeError(f'only list is supported as action params container')
-
-        for _ in range(len(data)):
-            field_name = next(key_iter)
-            value = next(value_iter)
-
-            assert field_name in struct_fields
-            typ = struct_fields.get(field_name, None)
-            assert typ
-
-            fn_name = typ
-            pack_params = [value]
-
-            if typ[-2:] == '[]':
-                fn_name = 'array'
-                pack_params = [typ[:-2], value]
-
-            elif typ[-1] == '?':
-                fn_name = 'optional'
-                pack_params = [typ[:-1], value]
-
-            elif typ[-1] == '$':
-                pack_params = [typ[:-1], value]
-
-            elif (account == 'eosio' and
-                  name =='setabi' and
-                  field_name == 'abi'):
-
-                abi_raw = DataStream()
-                abi_raw.pack_abi(value)
-                pack_params = [abi_raw.getvalue()]
-                fn_name = 'bytes'
-
-            elif typ in ['name', 'asset', 'symbol']:
-                pack_params = [str(value)]
-
-            pack_fn = getattr(ds, f'pack_{fn_name}')
-            pack_fn(*pack_params)
-
-        return binascii.hexlify(
-            ds.getvalue()).decode('utf-8')
-
-    async def _a_create_and_push_tx(
+    def _push_tx(
         self,
-        actions: list[dict],
-        key: str,
-        max_cpu_usage_ms=100,
-        max_net_usage_words=0
+        tx: dict,
+        retries: int = 2
     ) -> dict:
-        chain_info = await self.a_get_info()
-        ref_block_num, ref_block_prefix = get_tapos_info(
-            chain_info['last_irreversible_block_id'])
+        res = {}
+        for _ in range(retries):
+            res = self._post(
+                '/v1/chain/push_transaction', json=tx).json()
 
-        chain_id = chain_info['chain_id']
-
-        res = None
-        retries = 3
-        while retries > 0:
-            tx = {
-                'delay_sec': 0,
-                'max_cpu_usage_ms': max_cpu_usage_ms,
-                'actions': deepcopy(actions)
-            }
-
-            # package transation
-            for i, action in enumerate(tx['actions']):
-                tx['actions'][i]['data'] = self._pack_abi_data(action)
-
-            tx.update({
-                'expiration': get_expiration(
-                    datetime.utcnow(), int(timedelta(minutes=15).total_seconds())),
-                'ref_block_num': ref_block_num,
-                'ref_block_prefix': ref_block_prefix,
-                'max_net_usage_words': max_net_usage_words,
-                'max_cpu_usage_ms': max_cpu_usage_ms,
-                'delay_sec': 0,
-                'context_free_actions': [],
-                'transaction_extensions': [],
-                'context_free_data': []
-            })
-
-            # Sign transaction
-            try:
-                _, signed_tx = sign_tx(chain_id, tx, key)
-
-            except CannonicalSignatureError:
-                continue
-
-            # Pack
-            ds = DataStream()
-            ds.pack_transaction(signed_tx)
-            packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
-            final_tx = build_push_transaction_body(signed_tx['signatures'][0], packed_trx)
-
-            # Push transaction
-            self.logger.debug(f'pushing tx to: {self.endpoint}')
-            res = (await self._apost(f'{self.endpoint}/v1/chain/push_transaction', json=final_tx)).json()
-            res_json = json.dumps(res, indent=4)
-
-            self.logger.debug(res_json)
-
-            retries -= 1
+            logging.debug('sent tx: ')
+            logging.debug(json.dumps(tx, indent=4))
+            logging.debug('got resp: ')
+            logging.debug(json.dumps(res, indent=4))
 
             if 'error' in res:
                 continue
 
             else:
-                break
+                return res
 
         if not res:
-            ValueError('res is None')
+            err = TransactionPushError(f'Couldn\'t get a response for tx after {retries} tries')
+            logging.error(err.message + ': ')
+            logging.error(json.dumps(tx, indent=4))
+            raise err
+
+        error = res.get('error', None)
+        if error is not None:
+            logging.error(json.dumps(error, indent=4))
+            raise TransactionPushError.from_json(error)
 
         return res
 
-    async def a_push_action(
+    async def _a_push_tx(
+        self,
+        tx: dict,
+        retries: int = 2
+    ) -> dict:
+        res = {}
+        for _ in range(retries):
+            res = await self._post(
+                '/v1/chain/push_transaction', is_async=True, json=tx).json()
+
+            logging.debug('sent tx: ')
+            logging.debug(json.dumps(tx, indent=4))
+            logging.debug('got resp: ')
+            logging.debug(json.dumps(res, indent=4))
+
+            if 'error' in res:
+                continue
+
+            else:
+                return res
+
+        if not res:
+            err = TransactionPushError(f'Couldn\'t get a response for tx after {retries} tries')
+            logging.error(err.message + ': ')
+            logging.error(json.dumps(tx, indent=4))
+            raise err
+
+        error = res.get('error', None)
+        if error is not None:
+            logging.error(json.dumps(error, indent=4))
+            raise TransactionPushError.from_json(error)
+
+        return res
+
+    def _create_signed_tx(
+        self,
+        actions: list[dict],
+        key: str,
+        **kwargs
+    ):
+        chain_info = self.get_info()
+        ref_block_num, ref_block_prefix = get_tapos_info(
+            chain_info['last_irreversible_block_id'])
+
+        chain_id: str = chain_info['chain_id']
+        abis: dict[str, dict] = self._get_abis_for_actions(actions)
+
+        return create_and_sign_tx(chain_id, abis, actions, key, **kwargs)
+
+    async def _a_create_signed_tx(
+        self,
+        actions: list[dict],
+        key: str,
+        **kwargs
+    ):
+        chain_info = await self.a_get_info()
+        ref_block_num, ref_block_prefix = get_tapos_info(
+            chain_info['last_irreversible_block_id'])
+
+        chain_id: str = chain_info['chain_id']
+        abis: dict[str, dict] = self._get_abis_for_actions(actions)
+
+        return create_and_sign_tx(chain_id, abis, actions, key, **kwargs)
+
+    def push_actions(
+        self,
+        actions: list[dict],
+        key: str,
+        retries: int = 2,
+        **kwargs
+    ):
+        '''Async push actions, uses a single tx for all actions.
+
+        :param actions: list of actions
+        :type actions: str
+        :param key: private key used to sign
+        :type key: str
+        '''
+        tx = self._create_signed_tx(actions, key, **kwargs)
+        try:
+            return self._push_tx(tx, retries=retries)
+
+        except TransactionPushError as err:
+            self.logger.error(f'error while pushing: ')
+            self.logger.error(json.dumps([a['account'] + '::' + a['name'] for a in actions], indent=4))
+            raise err
+
+    def push_action(
         self,
         account: str,
         action: str,
         data: list,
         actor: str,
-        key: str,
+        key: str | None = None,
         permission: str = 'active',
         **kwargs
     ):
@@ -249,7 +263,10 @@ class CLEOS:
         :param permission: permission name
         :type permission: str
         '''
-        return await self._a_create_and_push_tx([{
+        if not isinstance(key, str):
+            key = self.get_private_key(account)
+
+        return self.push_actions([{
             'account': account,
             'name': action,
             'data': data,
@@ -263,6 +280,7 @@ class CLEOS:
         self,
         actions: list[dict],
         key: str,
+        retries: int = 2,
         **kwargs
     ):
         '''Async push actions, uses a single tx for all actions.
@@ -272,7 +290,46 @@ class CLEOS:
         :param key: private key used to sign
         :type key: str
         '''
-        return await self._a_create_and_push_tx(actions, key, **kwargs)
+        tx = await self._a_create_signed_tx(actions, key, **kwargs)
+        return await self._a_push_tx(tx, retries=retries)
+
+    async def a_push_action(
+        self,
+        account: str,
+        action: str,
+        data: list,
+        actor: str,
+        key: str | None = None,
+        permission: str = 'active',
+        **kwargs
+    ):
+        '''Async push action
+
+        :param account: smart contract account name
+        :type account: str
+        :param action: smart contract action name
+        :type action: str
+        :param data: action data
+        :type data: list
+        :param key: private key used to sign
+        :type key: str
+        :param permission: permission name
+        :type permission: str
+        '''
+        if not isinstance(key, str):
+            key = self.get_private_key(account)
+
+        return await self.a_push_actions([{
+            'account': account,
+            'name': action,
+            'data': data,
+            'authorization': [{
+                'actor': actor,
+                'permission': permission
+            }]
+        }], key, **kwargs)
+
+    # system action helpers
 
     def add_permission(
         self,
@@ -302,6 +359,7 @@ class CLEOS:
                 auth
             ],
             account,
+            key=self.get_private_key(account)
         )
 
     def deploy_contract(
@@ -311,8 +369,7 @@ class CLEOS:
         abi: dict,
         privileged: bool = False,
         create_account: bool = True,
-        staked: bool = True,
-        verify_hash: bool = True
+        staked: bool = True
     ):
         '''Deploy a built contract.
 
@@ -329,8 +386,6 @@ class CLEOS:
         :type create_account: bool
         :param staked: ``True`` if this account should use RAM & NET resources.
         :type staked: bool
-        :param verify_hash: Query remote node for ``contract_name`` and compare
-            hashes.
         :type verify_hash: bool
         '''
 
@@ -352,7 +407,7 @@ class CLEOS:
 
         self.wait_blocks(1)
 
-        ec, _ = self.add_permission(
+        self.add_permission(
             account_name,
             'active', 'owner',
             {
@@ -365,21 +420,10 @@ class CLEOS:
                 'waits': []
             }
         )
-        assert ec == 0
         self.logger.info('gave eosio.code permissions')
 
         local_shasum = sha256(wasm).hexdigest()
         self.logger.info(f'contract hash: {local_shasum}')
-
-        # verify contract hash using remote node
-        if verify_hash:
-            remote_shasum, _  = self.get_code(account_name, target_url=self.remote_endpoint)
-
-            if local_shasum != remote_shasum:
-                raise ContractDeployError(
-                    f'Local contract hash doesn\'t match remote:\n'
-                    f'local: {local_shasum}\n'
-                    f'remote: {remote_shasum}')
 
         self.logger.info(f'loading abi...')
         self.load_abi(account_name, abi)
@@ -411,16 +455,15 @@ class CLEOS:
             }]
         }]
 
-        ec, res = self.push_actions(
-            actions, self.private_keys[account_name])
+        try:
+            res = self.push_actions(
+                actions, self.private_keys[account_name])
 
-        if 'error' not in res:
             self.logger.info('deployed')
             return res
 
-        else:
-            self.logger.error(json.dumps(res, indent=4))
-            raise ContractDeployError(f'Couldn\'t deploy {account_name} contract.')
+        except TransactionPushError as err:
+            raise ContractDeployError(err.message)
 
     def deploy_contract_from_path(
         self,
@@ -448,30 +491,22 @@ class CLEOS:
 
     def get_code(
         self,
-        account_name: str,
-        target_url: str | None = None
+        account_name: str
     ) -> tuple[str, bytes]:
         '''Fetches and decodes the WebAssembly (WASM) code for a given account.
 
         :param account_name: Account to get the WASM code for
         :type account_name: str
-        :param target_url: The URL to fetch the WASM code from. Defaults to `self.url`.
-        :type target_url: str | None
         :return: A tuple containing the hash and the decoded WASM code.
         :rtype: tuple[str, bytes]
         :raises Exception: If the response contains an 'error' field.
         '''
-        if not target_url:
-            target_url = self.url
-
-        resp_obj = self._post(
-            f'{target_url}/v1/chain/get_raw_code_and_abi',
+        resp = self._post(
+            '/v1/chain/get_raw_code_and_abi',
             json={
                 'account_name': account_name
             }
-        )
-
-        resp = resp_obj.json()
+        ).json()
 
         if 'error' in resp:
             raise Exception(resp)
@@ -481,22 +516,17 @@ class CLEOS:
 
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: str, target_url: str | None = None) -> dict:
+    def get_abi(self, account_name: str) -> dict:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
         :param account_name: Account to get the ABI for
         :type account_name: str
-        :param target_url: The URL to fetch the ABI from. Defaults to `self.url`.
-        :type target_url: str | None
         :return: An dictionary containing the ABI data.
         :rtype: dict
         :raises Exception: If the response contains an 'error' field.
         '''
-        if not target_url:
-            target_url = self.url
-
         resp = self._post(
-            f'{target_url}/v1/chain/get_abi',
+            '/v1/chain/get_abi',
             json={
                 'account_name': account_name
             }
@@ -507,79 +537,37 @@ class CLEOS:
 
         return resp['abi']
 
-    def load_abi(self, account: str, abi: dict):
-        self._loaded_abis[account] = abi
-
-    def load_abi_file(self, account: str, abi_path: str | Path):
-        with open(abi_path, 'rb') as abi_file:
-            self.load_abi(account, json.load(abi_file))
-
-    def get_loaded_abi(self, account: str) -> dict:
-        if account not in self._loaded_abis:
-            raise ValueError(f'ABI for {account} not loaded!')
-
-        return self._loaded_abis[account]
-
-    def create_snapshot(self, target_url: str, body: dict):
-        '''Initiates a snapshot of the AntelopeIO blockchain at the given URL.
-
-        :param target_url: The URL where the snapshot will be created.
-        :type target_url: str
-        :param body: Parameters for snapshot creation in dictionary format.
-        :type body: dict
-        :return: The HTTP response object.
-        :rtype: Response
-        :note: This function only works if `producer_api_plugin` is enabled on the target node.
-        '''
-
-        resp = self._post(
-            f'{target_url}/v1/producer/create_snapshot',
+    def create_snapshot(self, body: dict):
+        return self._post(
+            '/v1/producer/create_snapshot',
             json=body
         )
-        return resp
 
-    def schedule_snapshot(self, target_url: str, **kwargs):
-        '''Schedules a snapshot of the AntelopeIO blockchain at the given URL.
-
-        :param target_url: The URL where the snapshot will be scheduled.
-        :type target_url: str
-        :param kwargs: Additional keyword arguments for snapshot scheduling.
-        :return: The HTTP response object.
-        :rtype: Response
-        :note: This function only works if `producer_api_plugin` is enabled on the target node.
-        '''
-
-        resp = self._post(
-            f'{target_url}/v1/producer/schedule_snapshot',
-            json=kwargs
+    def schedule_snapshot(self, body: dict):
+        return self._post(
+            '/v1/producer/schedule_snapshot',
+            json=body
         )
-        return resp
 
-    def get_node_activations(self, target_url: str) -> list[dict]:
-        '''Fetches a list of activated protocol features from the AntelopeIO blockchain at the given URL.
-
-        :param target_url: The URL to fetch the activated protocol features from.
-        :type target_url: str
-        :return: A list of dictionaries, each representing an activated protocol feature.
-        :rtype: list[dict]
-        '''
-
+    def get_node_activations(self) -> list[dict]:
         lower_bound = 0
         step = 250
         more = True
         features = []
         while more:
-            r = self._post(
-                f'{target_url}/v1/chain/get_activated_protocol_features',
+            resp = self._post(
+                '/v1/chain/get_activated_protocol_features',
                 json={
                     'limit': step,
                     'lower_bound': lower_bound,
                     'upper_bound': lower_bound + step
                 }
-            )
-            resp = r.json()
+            ).json()
 
-            assert 'activated_protocol_features' in resp
+            if 'activated_protocol_features' not in resp:
+                raise ChainAPIError(
+                    'expected activated_protocol_features field on get_node_activations response')
+
             features += resp['activated_protocol_features']
             lower_bound += step
             more = 'more' in resp
@@ -590,15 +578,11 @@ class CLEOS:
 
         return features
 
-    def clone_node_activations(self, target_url: str):
-        '''Clones the activated protocol features from a target AntelopeIO node to the current node.
-
-        :param target_url: The URL to fetch the activated protocol features from.
-        :type target_url: str
-        :raises Exception: If the activation fails.
+    def clone_activations(self, other_cleos: 'CLEOS'):
+        '''Clones the activated protocol features from the remote to the current node.
         '''
 
-        features = self.get_node_activations(target_url)
+        features = other_cleos.get_node_activations()
 
         feature_names = [
             feat['specification'][0]['value']
@@ -619,25 +603,15 @@ class CLEOS:
             }]
         } for f in features]
 
-        ec, res = self.push_actions(actions, self.private_keys['eosio'])
-        if ec != 0:
-            raise Exception(json.dumps(res, indent=4))
-
+        self.push_actions(actions, self.private_keys['eosio'])
         self.logger.info('activated')
 
-    def diff_protocol_activations(self, target_one: str, target_two: str):
-        '''Compares the activated protocol features between two AntelopeIO nodes.
-
-        :param target_one: The URL of the first node to compare.
-        :type target_one: str
-        :param target_two: The URL of the second node to compare.
-        :type target_two: str
-        :return: A list of feature names activated in `target_one` but not in `target_two`.
-        :rtype: list[str]
+    def diff_protocol_activations(self, other_cleos: 'CLEOS'):
+        '''Compares the activated protocol features between the remote and local endpoints.
         '''
 
-        features_one = self.get_node_activations(target_one)
-        features_two = self.get_node_activations(target_two)
+        features_one = self.get_node_activations()
+        features_two = other_cleos.get_node_activations()
 
         features_one_names = [
             feat['specification'][0]['value']
@@ -654,7 +628,6 @@ class CLEOS:
         self,
         account_name: str,
         download_location: str | Path,
-        target_url: str | None = None,
         local_name: str | None = None,
         abi: dict | None = None
     ):
@@ -665,8 +638,6 @@ class CLEOS:
         :param download_location: The directory where the contract will be downloaded.
         :type download_location: str | Path
         :param target_url: Optional URL to a specific node. Defaults to the node set in the client.
-        :type target_url: str | None
-        :param local_name: Optional name for the downloaded contract files. Defaults to `account_name`.
         :type local_name: str | None
 
         :raises: Custom exceptions based on download failure.
@@ -677,16 +648,13 @@ class CLEOS:
         if isinstance(download_location, str):
             download_location = Path(download_location).resolve()
 
-        if not target_url:
-            target_url = self.url
-
         if not local_name:
             local_name = account_name
 
-        _, wasm = self.get_code(account_name, target_url=target_url)
+        _, wasm = self.get_code(account_name)
 
         if not abi:
-            abi = self.get_abi(account_name, target_url=target_url)
+            abi = self.get_abi(account_name)
 
         with open(download_location / f'{local_name}.wasm', 'wb+') as wasm_file:
             wasm_file.write(wasm)
@@ -700,8 +668,7 @@ class CLEOS:
         contracts: str | Path = 'tests/contracts',
         token_sym: str = DEFAULT_SYS_TOKEN_SYM,
         ram_amount: int = 16_000_000_000,
-        activations_node: str | None = None,
-        verify_hash: bool = False,
+        remote_node: 'CLEOS' = None,
         extras: list[str] = []
     ):
         '''Boots a blockchain with required system contracts and settings.
@@ -712,8 +679,6 @@ class CLEOS:
         :type token_sym: str
         :param ram_amount: Initial RAM allocation for system. Defaults to 16,000,000,000.
         :type ram_amount: int
-        :param activations_node: Endpoint to clone protocol features from. Defaults to None, using `self.remote_endpoint`.
-        :type activations_node: str | None
         :param verify_hash: Whether to verify contract hash after deployment. Defaults to False.
         :type verify_hash: bool
 
@@ -738,8 +703,7 @@ class CLEOS:
             'works.decide',
             'amend.decide'
         ]:
-            ec, _ = self.create_account('eosio', name)
-            assert ec == 0
+            self.create_account('eosio', name)
 
         # load contracts wasm and abi from specified dir
         contract_paths: dict[str, Path] = {}
@@ -749,20 +713,17 @@ class CLEOS:
 
         self.deploy_contract_from_path(
             'eosio.token', contract_paths['eosio.token'],
-            staked=False,
-            verify_hash=verify_hash
+            staked=False
         )
 
         self.deploy_contract_from_path(
             'eosio.msig', contract_paths['eosio.msig'],
-            staked=False,
-            verify_hash=verify_hash
+            staked=False
         )
 
         self.deploy_contract_from_path(
             'eosio.wrap', contract_paths['eosio.wrap'],
-            staked=False,
-            verify_hash=verify_hash
+            staked=False
         )
 
         self.init_sys_token(token_sym=token_sym)
@@ -771,52 +732,44 @@ class CLEOS:
 
         self.sys_deploy_info = self.deploy_contract_from_path(
             'eosio', contract_paths['eosio.bios'],
-            create_account=False,
-            verify_hash=verify_hash
+            create_account=False
         )
 
-        if not activations_node:
-            activations_node = self.remote_endpoint
-
-        self.clone_node_activations(activations_node)
+        if remote_node is not None:
+            self.clone_activations(remote_node)
 
         self.sys_deploy_info = self.deploy_contract_from_path(
             'eosio', contract_paths['eosio.system'],
-            create_account=False,
-            verify_hash=verify_hash
+            create_account=False
         )
 
-        ec, _ = self.push_action(
+        self.push_action(
             'eosio',
             'setpriv',
             ['eosio.msig', 1],
             'eosio'
         )
-        assert ec == 0
 
-        ec, _ = self.push_action(
+        self.push_action(
             'eosio',
             'setpriv',
             ['eosio.wrap', 1],
             'eosio'
         )
-        assert ec == 0
 
-        ec, _ = self.push_action(
+        self.push_action(
             'eosio',
             'init',
             [0, token_sym],
             'eosio'
         )
-        assert ec == 0
 
-        ec, _ = self.push_action(
+        self.push_action(
             'eosio',
             'setram',
             [ram_amount],
             'eosio'
         )
-        assert ec == 0
 
         if 'telos' in extras:
             self.create_account_staked(
@@ -824,22 +777,20 @@ class CLEOS:
 
             self.deploy_contract_from_path(
                 'telos.decide', contract_paths['telos.decide'],
-                create_account=False,
-                verify_hash=verify_hash
+                create_account=False
             )
 
             self.create_account_staked('eosio', 'exrsrv.tf')
 
     # Producer API
 
-    def is_block_production_paused(self):
+    def is_block_production_paused(self, *args, **kwargs):
         '''Checks if block production is currently paused.
 
         :return: Response from the `/v1/producer/paused` endpoint.
         :rtype: dict
         '''
-        return self._post(
-            f'{self.url}/v1/producer/paused').json()
+        return self._post('/v1/producer/paused').json()
 
     def resume_block_production(self):
         '''Resumes block production.
@@ -847,8 +798,7 @@ class CLEOS:
         :return: Response from the `/v1/producer/resume` endpoint.
         :rtype: dict
         '''
-        return self._post(
-            f'{self.url}/v1/producer/resume').json()
+        return self._post('/v1/producer/resume').json()
 
     def pause_block_production(self):
         '''Pauses block production.
@@ -856,8 +806,7 @@ class CLEOS:
         :return: Response from the `/v1/producer/pause` endpoint.
         :rtype: dict
         '''
-        return self._post(
-            f'{self.url}/v1/producer/pause').json()
+        return self._post('/v1/producer/pause').json()
 
     # Net API
 
@@ -867,8 +816,7 @@ class CLEOS:
         :return: Response from the `/v1/net/connections` endpoint.
         :rtype: dict
         '''
-        return self._post(
-            f'{self.url}/v1/net/connections').json()
+        return self._post('/v1/net/connections').json()
 
     def connect_node(self, endpoint: str):
         '''Connects to a specified node.
@@ -879,7 +827,7 @@ class CLEOS:
         :rtype: dict
         '''
         return self._post(
-            f'{self.url}/v1/net/connect',
+            '/v1/net/connect',
             json=endpoint).json()
 
     def disconnect_node(self, endpoint: str):
@@ -891,7 +839,7 @@ class CLEOS:
         :rtype: dict
         '''
         return self._post(
-            f'{self.url}/v1/net/disconnect',
+            '/v1/net/disconnect',
             json=endpoint).json()
 
     def create_key_pair(self) -> tuple[str, str]:
@@ -934,6 +882,13 @@ class CLEOS:
 
         self._key_to_acc[public_key] += [account]
 
+    def get_private_key(self, account: str) -> str:
+        key = self.private_keys.get(account, None)
+        if not isinstance(key, str):
+            raise ValueError(f'no key imported for account {account}')
+
+        return key
+
     def assign_key(self, account: str, public_key: str):
         '''Assigns an existing public key to a new account.
 
@@ -957,11 +912,10 @@ class CLEOS:
         :return: Feature digest.
         :rtype: str
         '''
-        r = self._post(
-            f'{self.endpoint}/v1/producer/get_supported_protocol_features',
+        resp = self._post(
+            '/v1/producer/get_supported_protocol_features',
             json={}
-        )
-        resp = r.json()
+        ).json()
         assert isinstance(resp, list)
 
         for item in resp:
@@ -982,7 +936,7 @@ class CLEOS:
         '''
         digest = self.get_feature_digest(feature_name)
         r = self._post(
-            f'{self.endpoint}/v1/producer/schedule_protocol_feature_activations',
+            '/v1/producer/schedule_protocol_feature_activations',
             json={
                 'protocol_features_to_activate': [digest]
             }
@@ -999,13 +953,12 @@ class CLEOS:
         :param digest: Feature digest.
         :type digest: str
         '''
-        ec, _ = self.push_action(
+        self.push_action(
             'eosio',
             'activate',
             [digest],
             'eosio'
         )
-        assert ec == 0
         self.logger.info(f'{digest} active.')
 
     def activate_feature(self, feature_name: str):
@@ -1036,160 +989,6 @@ class CLEOS:
                 10 ** self.sys_token_supply.symbol.precision),
             self.sys_token_supply.symbol)
 
-    def _create_and_push_tx(
-        self,
-        actions: list[dict],
-        key: str,
-        max_cpu_usage_ms=255,
-        max_net_usage_words=0,
-        push: bool = True
-    ) -> dict:
-        chain_id: str
-        ref_block_num: int = 0
-        ref_block_prefix: int = 0
-        if push:
-            chain_info = self.get_info()
-            ref_block_num, ref_block_prefix = get_tapos_info(
-                chain_info['last_irreversible_block_id'])
-
-            chain_id = chain_info['chain_id']
-
-        res = None
-        retries = 2
-        while retries > 0:
-            tx = {
-                'delay_sec': 0,
-                'max_cpu_usage_ms': max_cpu_usage_ms,
-                'actions': deepcopy(actions)
-            }
-
-            # package transation
-            for i, action in enumerate(tx['actions']):
-                tx['actions'][i]['data'] = self._pack_abi_data(action)
-
-            tx.update({
-                'expiration': get_expiration(
-                    datetime.utcnow(), timedelta(minutes=15).total_seconds()),
-                'ref_block_num': ref_block_num,
-                'ref_block_prefix': ref_block_prefix,
-                'max_net_usage_words': max_net_usage_words,
-                'max_cpu_usage_ms': max_cpu_usage_ms,
-                'delay_sec': 0,
-                'context_free_actions': [],
-                'transaction_extensions': [],
-                'context_free_data': []
-            })
-
-            if not push:
-                return tx
-
-            # Sign transaction
-            _, signed_tx = sign_tx(chain_id, tx, key)
-
-            # Pack
-            ds = DataStream()
-            ds.pack_transaction(signed_tx)
-            packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
-            final_tx = build_push_transaction_body(signed_tx['signatures'][0], packed_trx)
-
-            # Push transaction
-            logging.debug(f'pushing tx to: {self.endpoint}')
-            res = self._post(f'{self.endpoint}/v1/chain/push_transaction', json=final_tx).json()
-            res_json = json.dumps(res, indent=4)
-
-            logging.debug(res_json)
-
-            retries -= 1
-
-            if 'error' in res:
-                continue
-
-            else:
-                break
-
-        if not res:
-            ValueError('res is None')
-
-        return res
-
-
-    def push_action(
-        self,
-        account: str,
-        action: str,
-        data: list[str | int | bool | bytes | dict | list],
-        actor: str,
-        key: str | None = None,
-        permission: str = 'active',
-        push: bool = True,
-        **kwargs
-    ) -> tuple[int, dict] | dict:
-        '''Pushes a single action to the blockchain.
-
-        :param account: The account to which the action belongs.
-        :type account: str
-        :param action: The action name.
-        :type action: str
-        :param data: The action data.
-        :type data: list[str | int | bool | bytes | dict | list]
-        :param actor: The authorizing account.
-        :type actor: str
-        :param key: The private key for signing. Defaults to actor's private key.
-        :type key: str | None
-        :param permission: Permission level for the action. Defaults to 'active'.
-        :type permission: str
-
-        :return: Exit code and response dictionary.
-        :rtype: tuple[int, dict]
-        '''
-
-        if not key:
-            key = self.private_keys[actor]
-
-        res = self._create_and_push_tx([{
-            'account': account,
-            'name': action,
-            'data': data,
-            'authorization': [{
-                'actor': actor,
-                'permission': permission
-            }]
-        }], key, push=push, **kwargs)
-
-        if not push:
-            return res
-
-        if 'error' in res:
-            self.logger.error(json.dumps(res, indent=4))
-            return 1, res
-        else:
-            return 0, res
-
-    def push_actions(
-        self,
-        actions: list[dict],
-        key: str,
-        **kwargs
-    ):
-        '''Pushes multiple actions to the blockchain in a single transaction.
-
-        :param actions: list of action dictionaries.
-        :type actions: list[dict]
-        :param key: The private key for signing.
-        :type key: str
-
-        :return: Exit code and response dictionary.
-        :rtype: tuple[int, dict]
-        '''
-
-        res = self._create_and_push_tx(actions, key, **kwargs)
-
-        if 'error' in res:
-            self.logger.error(json.dumps(res, indent=4))
-            return 1, res
-        else:
-            return 0, res
-
     def create_account(
         self,
         owner: str,
@@ -1216,7 +1015,7 @@ class CLEOS:
             pub = key
             self.assign_key(name, pub)
 
-        ec, out = self.push_action(
+        return self.push_action(
             'eosio',
             'newaccount',
             [owner, name,
@@ -1224,8 +1023,6 @@ class CLEOS:
              {'threshold': 1, 'keys': [{'key': pub, 'weight': 1}], 'accounts': [], 'waits': []}],
             owner, self.private_keys[owner]
         )
-        assert ec == 0
-        return ec, out
 
     def create_account_staked(
         self,
@@ -1296,10 +1093,8 @@ class CLEOS:
             }]
         }]
 
-        ec, res = self.push_actions(
+        return self.push_actions(
             actions, self.private_keys[owner])
-
-        return ec, res
 
     def get_table(
         self,
@@ -1331,11 +1126,13 @@ class CLEOS:
             **kwargs
         }
         while not done:
-            resp = self._post(f'{self.url}/v1/chain/get_table_rows', json=params).json()
+            resp = self._post(
+                '/v1/chain/get_table_rows', json=params).json()
+
             if 'code' in resp and resp['code'] != 200:
                 resp = json.dumps(resp, indent=4)
                 self.logger.critical(resp)
-                raise BaseException(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
+                raise ChainAPIError(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
             rows.extend(resp['rows'])
@@ -1352,6 +1149,7 @@ class CLEOS:
         table: str,
         **kwargs
     ) -> list[dict]:
+
         done = False
         rows = []
         params = {
@@ -1361,17 +1159,21 @@ class CLEOS:
             'json': True,
             **kwargs
         }
-        while not done:
-            resp = (await self._apost(f'{self.url}/v1/chain/get_table_rows', json=params)).json()
-            if ('code' in resp)  or ('statusCode' in resp):
-                self.logger.critical(json.dumps(resp, indent=4))
-                assert False
 
-            self.logger.debug(f'aget_table {account} {scope} {table}: {resp}')
+        while not done:
+            resp = await (self._post(
+                '/v1/chain/get_table_rows', is_async=True, json=params)).json()
+
+            if 'code' in resp and resp['code'] != 200:
+                resp = json.dumps(resp, indent=4)
+                self.logger.critical(resp)
+                raise ChainAPIError(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
+
+            self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
             rows.extend(resp['rows'])
             done = not resp['more']
             if not done:
-                params['lower_bound'] = resp['next_key']
+                params['index_position'] = resp['next_key']
 
         return rows
 
@@ -1390,9 +1192,7 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: dict[str, str | int]
         '''
-        resp = self._get(f'{self.url}/v1/chain/get_info')
-        assert resp.status_code == 200
-        return resp.json()
+        return self._get('/v1/chain/get_info').json()
 
     async def a_get_info(self) -> dict[str, str | int]:
         '''Get blockchain statistics.
@@ -1409,9 +1209,7 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: dict[str, str | int]
         '''
-        resp = await self._aget(f'{self.url}/v1/chain/get_info')
-        assert resp.status_code == 200
-        return resp.json()
+        return await self._aget('/v1/chain/get_info').json()
 
     def get_resources(self, account: str) -> list[dict]:
         '''Get account resources.
@@ -1728,11 +1526,8 @@ class CLEOS:
 
             self.sys_token_supply = Asset(token_amount, token_sym)
 
-            ec, _ = self.create_token('eosio', self.sys_token_supply)
-            assert ec == 0
-
-            ec, _ = self.issue_token('eosio', self.sys_token_supply, __name__)
-            assert ec == 0
+            self.create_token('eosio', self.sys_token_supply)
+            self.issue_token('eosio', self.sys_token_supply, __name__)
 
             self._sys_token_init = True
 

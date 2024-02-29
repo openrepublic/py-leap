@@ -7,9 +7,13 @@ import struct
 import hashlib
 import binascii
 import calendar
-from datetime import datetime
+
+from copy import deepcopy
 from base58 import b58decode, b58encode
+from datetime import datetime
 from collections import OrderedDict
+
+from ..errors import SerializationException
 
 
 def ripmed160(data):
@@ -946,7 +950,7 @@ class CannonicalSignatureError(BaseException):
     ...
 
 
-def sign_hash(h, pk, max_retries=10):
+def sign_hash(h, pk, max_retries=100):
     nonce = 0
     while nonce < max_retries:
         v, r, s = ecdsa_raw_sign_nonce(h, pk, nonce)
@@ -1055,3 +1059,118 @@ def create_tx(chain_id, block_id, expiration, privkey, fn_action_builder, params
 
     tx_id, signed_tx = sign_tx(chain_id, u_tx, privkey)
     return tx_id, signed_tx
+
+# given an abi and action data, return serialized data in hexstr format
+def pack_abi_data(abi: dict, action: dict) -> str:
+    ds = DataStream()
+    account = action['account']
+    name = action['name']
+    data = action['data']
+
+    if 'structs' not in abi:
+        raise SerializationException(f'expected abi to have \"structs\" key!')
+
+    struct = [s for s in abi['structs'] if s['name'] == name]
+
+    if len(struct) != 1:
+        raise SerializationException(f'expected only one struct def for {name}')
+
+    struct = struct[0]
+    struct_fields = {f['name']: f['type'] for f in struct['fields']}
+
+    if isinstance(data, list):
+        key_iter = iter(struct_fields.keys())
+        value_iter = iter(data)
+
+    else:
+        raise SerializationException(f'only list is supported as action params container')
+
+    for _ in range(len(data)):
+        field_name = next(key_iter)
+        value = next(value_iter)
+
+        typ = struct_fields.get(field_name, None)
+        if typ is None:
+            raise SerializationException(
+                f'expected field \"{field_name}\" to be in {list(struct_fields.keys())}')
+
+        fn_name = typ
+        pack_params = [value]
+
+        if typ[-2:] == '[]':
+            fn_name = 'array'
+            pack_params = [typ[:-2], value]
+
+        elif typ[-1] == '?':
+            fn_name = 'optional'
+            pack_params = [typ[:-1], value]
+
+        elif typ[-1] == '$':
+            pack_params = [typ[:-1], value]
+
+        elif (account == 'eosio' and
+                name =='setabi' and
+                field_name == 'abi'):
+
+            abi_raw = DataStream()
+            abi_raw.pack_abi(value)
+            pack_params = [abi_raw.getvalue()]
+            fn_name = 'bytes'
+
+        elif typ in ['name', 'asset', 'symbol']:
+            pack_params = [str(value)]
+
+        pack_fn = getattr(ds, f'pack_{fn_name}')
+        pack_fn(*pack_params)
+
+    return binascii.hexlify(
+        ds.getvalue()).decode('utf-8')
+
+
+def create_and_sign_tx(
+    chain_id: str,
+    abis: dict[str, dict],
+    actions: list[dict],
+    key: str,
+    max_cpu_usage_ms=255,
+    max_net_usage_words=0,
+    ref_block_num: int = 0,
+    ref_block_prefix: int = 0
+) -> dict:
+
+    tx = {
+        'delay_sec': 0,
+        'max_cpu_usage_ms': max_cpu_usage_ms,
+        'actions': deepcopy(actions)
+    }
+
+    # package transation
+    for i, action in enumerate(tx['actions']):
+        account = action['account']
+        abi = abis.get(account, None)
+        if abi is None:
+            SerializationException(f'don\'t have abi for {account}')
+
+        tx['actions'][i]['data'] = pack_abi_data(abi, action)
+
+    tx.update({
+        'expiration': get_expiration(
+            datetime.utcnow(), timedelta(minutes=15).total_seconds()),
+        'ref_block_num': ref_block_num,
+        'ref_block_prefix': ref_block_prefix,
+        'max_net_usage_words': max_net_usage_words,
+        'max_cpu_usage_ms': max_cpu_usage_ms,
+        'delay_sec': 0,
+        'context_free_actions': [],
+        'transaction_extensions': [],
+        'context_free_data': []
+    })
+
+    # sign transaction
+    _, signed_tx = sign_tx(chain_id, tx, key)
+
+    # pack
+    ds = DataStream()
+    ds.pack_transaction(signed_tx)
+    packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
+    return build_push_transaction_body(signed_tx['signatures'][0], packed_trx)

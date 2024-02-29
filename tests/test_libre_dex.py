@@ -6,9 +6,7 @@ from leap.protocol import Asset
 
 def test_get_price():
 
-    cleos = CLEOS(
-        url='https://libre.quantumblok.com',
-        remote='https://libre.quantumblok.com')
+    cleos = CLEOS('https://libre.quantumblok.com')
 
     res = cleos.get_table('swap.libre', 'BTCUSD', 'stat')[0]
 
