@@ -463,7 +463,7 @@ class CLEOS:
             return res
 
         except TransactionPushError as err:
-            raise ContractDeployError(err.message)
+            raise ContractDeployError.from_other(err)
 
     def deploy_contract_from_path(
         self,

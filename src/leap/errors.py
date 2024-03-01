@@ -5,7 +5,7 @@ class SerializationException(BaseException):
     ...
 
 
-class ContractDeployError(BaseException):
+class ChainAPIError(BaseException):
     ...
 
 
@@ -44,6 +44,7 @@ class TransactionPushError(BaseException):
         self.code = code
         self.name = name
         self.what = what
+        self.details = details
 
         msg = f'Error code {code}: {what}'
 
@@ -69,5 +70,9 @@ class TransactionPushError(BaseException):
         )
 
 
-class ChainAPIError(BaseException):
-    ...
+class ContractDeployError(TransactionPushError):
+
+    @staticmethod
+    def from_other(error: 'TransactionPushError'):
+        return ContractDeployError(
+            error.code, error.name, error.what, error.details)

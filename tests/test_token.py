@@ -40,10 +40,10 @@ def test_symbol_exists(cleos_w_bootstrap):
 
     cleos.create_token(creator, max_supply)
 
-    cleos.wait_blocks(1)
+    cleos.wait_blocks(3)
 
     with pytest.raises(TransactionPushError) as err:
-        cleos.create_token(creator, max_supply)
+        cleos.create_token(creator, max_supply, retries=1)
 
     assert 'token with symbol already exists' in str(err)
 
