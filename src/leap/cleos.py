@@ -2,16 +2,16 @@
 
 import sys
 import time
-import json
 import base64
 import logging
 import requests
 import binascii
+import json as json_module
 
 from copy import deepcopy
-from urllib3.util.retry import Retry
 from pathlib import Path
 from hashlib import sha256
+from urllib3.util.retry import Retry
 
 from datetime import datetime, timedelta
 
@@ -80,7 +80,7 @@ class CLEOS:
 
     def load_abi_file(self, account: str, abi_path: str | Path):
         with open(abi_path, 'rb') as abi_file:
-            self.load_abi(account, json.load(abi_file))
+            self.load_abi(account, json_module.load(abi_file))
 
     def get_loaded_abi(self, account: str) -> dict:
         if account not in self._loaded_abis:
@@ -97,13 +97,32 @@ class CLEOS:
         *args,
         base_route: str | None = None,
         is_async: bool = False,
+        params: dict | None = None,
+        json: dict | None = None,
+        data: str | None = None,
+        headers: dict[str, str] = {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+        },
         **kwargs
     ):
         if not isinstance(base_route, str):
             base_route = self.endpoint
 
+        _data = '{}'
+        if isinstance(data, str):
+            _data = data
+
+        elif isinstance(json, dict):
+            _data = json_module.dumps(json)
+
+        elif isinstance(params, dict):
+            _data = json_module.dumps(params)
+
+        kwargs['data'] = _data
+
         session = self._asession if is_async else self._session
-        return getattr(session, method)(base_route + route, *args, **kwargs)
+        return getattr(session, method)(base_route + route, *args, headers=headers, **kwargs)
 
     def _get(self, *args, **kwargs):
         return self._session_method('get', *args, **kwargs)
@@ -130,9 +149,9 @@ class CLEOS:
                 '/v1/chain/push_transaction', json=tx).json()
 
             logging.debug('sent tx: ')
-            logging.debug(json.dumps(tx, indent=4))
+            logging.debug(json_module.dumps(tx, indent=4))
             logging.debug('got resp: ')
-            logging.debug(json.dumps(res, indent=4))
+            logging.debug(json_module.dumps(res, indent=4))
 
             if 'error' in res:
                 continue
@@ -143,12 +162,12 @@ class CLEOS:
         if not res:
             err = TransactionPushError(f'Couldn\'t get a response for tx after {retries} tries')
             logging.error(err.message + ': ')
-            logging.error(json.dumps(tx, indent=4))
+            logging.error(json_module.dumps(tx, indent=4))
             raise err
 
         error = res.get('error', None)
         if error is not None:
-            logging.error(json.dumps(error, indent=4))
+            logging.error(json_module.dumps(error, indent=4))
             raise TransactionPushError.from_json(error)
 
         return res
@@ -164,9 +183,9 @@ class CLEOS:
                 '/v1/chain/push_transaction', is_async=True, json=tx).json()
 
             logging.debug('sent tx: ')
-            logging.debug(json.dumps(tx, indent=4))
+            logging.debug(json_module.dumps(tx, indent=4))
             logging.debug('got resp: ')
-            logging.debug(json.dumps(res, indent=4))
+            logging.debug(json_module.dumps(res, indent=4))
 
             if 'error' in res:
                 continue
@@ -177,12 +196,12 @@ class CLEOS:
         if not res:
             err = TransactionPushError(f'Couldn\'t get a response for tx after {retries} tries')
             logging.error(err.message + ': ')
-            logging.error(json.dumps(tx, indent=4))
+            logging.error(json_module.dumps(tx, indent=4))
             raise err
 
         error = res.get('error', None)
         if error is not None:
-            logging.error(json.dumps(error, indent=4))
+            logging.error(json_module.dumps(error, indent=4))
             raise TransactionPushError.from_json(error)
 
         return res
@@ -237,7 +256,7 @@ class CLEOS:
 
         except TransactionPushError as err:
             self.logger.error(f'error while pushing: ')
-            self.logger.error(json.dumps([a['account'] + '::' + a['name'] for a in actions], indent=4))
+            self.logger.error(json_module.dumps([a['account'] + '::' + a['name'] for a in actions], indent=4))
             raise err
 
     def push_action(
@@ -484,7 +503,7 @@ class CLEOS:
 
         abi = None
         with open(contract_path / f'{contract_name}.abi', 'rb') as abi_file:
-            abi = json.load(abi_file)
+            abi = json_module.load(abi_file)
 
         return self.deploy_contract(
             account_name, wasm, abi, **kwargs)
@@ -591,7 +610,7 @@ class CLEOS:
 
         self.logger.info('activating features:')
         self.logger.info(
-            json.dumps(feature_names, indent=4))
+            json_module.dumps(feature_names, indent=4))
 
         actions = [{
             'account': 'eosio',
@@ -660,7 +679,7 @@ class CLEOS:
             wasm_file.write(wasm)
 
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
-            abi_file.write(json.dumps(abi))
+            abi_file.write(json_module.dumps(abi))
 
 
     def boot_sequence(
@@ -1130,7 +1149,7 @@ class CLEOS:
                 '/v1/chain/get_table_rows', json=params).json()
 
             if 'code' in resp and resp['code'] != 200:
-                resp = json.dumps(resp, indent=4)
+                resp = json_module.dumps(resp, indent=4)
                 self.logger.critical(resp)
                 raise ChainAPIError(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
 
@@ -1165,7 +1184,7 @@ class CLEOS:
                 '/v1/chain/get_table_rows', is_async=True, json=params)).json()
 
             if 'code' in resp and resp['code'] != 200:
-                resp = json.dumps(resp, indent=4)
+                resp = json_module.dumps(resp, indent=4)
                 self.logger.critical(resp)
                 raise ChainAPIError(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
 

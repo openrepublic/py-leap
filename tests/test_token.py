@@ -126,7 +126,7 @@ def test_issue(cleos_w_bootstrap):
 
     assert 'must issue positive quantity' in str(err)
 
-    cleos.wait_blocks(1)
+    cleos.wait_blocks(3)
 
     issued = f'500.000 {sym}'
     cleos.issue_token(creator, issued, 'hola')
