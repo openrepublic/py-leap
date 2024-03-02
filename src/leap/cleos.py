@@ -508,6 +508,17 @@ class CLEOS:
         return self.deploy_contract(
             account_name, wasm, abi, **kwargs)
 
+    def get_account(
+        self,
+        account_name: str
+    ) -> dict:
+        return self._post(
+            '/v1/chain/get_account',
+            json={
+                'account_name': account_name
+            }
+        ).json()
+
     def get_code(
         self,
         account_name: str
@@ -528,7 +539,7 @@ class CLEOS:
         ).json()
 
         if 'error' in resp:
-            raise Exception(resp)
+            raise ChainAPIError(resp)
 
         wasm = base64.b64decode(resp['wasm'])
         wasm_hash = sha256(wasm).hexdigest()
@@ -552,7 +563,7 @@ class CLEOS:
         ).json()
 
         if 'error' in resp:
-            raise Exception(resp)
+            raise ChainAPIError(resp)
 
         return resp['abi']
 
