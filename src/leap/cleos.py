@@ -1269,6 +1269,16 @@ class CLEOS:
             payer
         )
 
+    @property
+    def head_block_num(self) -> int:
+        return self.get_info()['head_block_num']
+
+    def wait_block(self, block_num: int):
+        '''Wait for specific block to be reached on node.
+        '''
+        while self.head_block_num < block_num:
+            time.sleep(.5)
+
     def wait_blocks(self, n: int):
         '''Waits for a specific number of blocks to be produced.
 
@@ -1277,16 +1287,8 @@ class CLEOS:
 
         :return: None
         '''
-        target_block = int(self.get_info()['head_block_num']) + n
-
-        while True:
-            current_block = int(self.get_info()['head_block_num'])
-            if current_block >= target_block:
-                break
-
-            remaining_blocks = target_block - current_block
-            wait_time = remaining_blocks * 0.5
-            time.sleep(wait_time)
+        target_block = int(self.head_block_num) + n
+        self.wait_block(target_block)
 
 
     '''Token managment
