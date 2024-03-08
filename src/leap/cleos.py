@@ -1273,13 +1273,24 @@ class CLEOS:
     def head_block_num(self) -> int:
         return self.get_info()['head_block_num']
 
-    def wait_block(self, block_num: int):
+    def wait_block(self, block_num: int, progress: bool = False, interval: float = .5):
         '''Wait for specific block to be reached on node.
         '''
-        while self.head_block_num < block_num:
-            time.sleep(.5)
+        current_block = self.head_block_num
 
-    def wait_blocks(self, n: int):
+        last_report = -1000
+        def report():
+            self.logger.info(f'waiting for block {block_num}, current: {current_block}, remaining: {block_num - current_block}')
+            last_report = current_block
+
+        while current_block < block_num:
+            if current_block - last_report > 1000:
+                report()
+
+            time.sleep(interval)
+            current_block = self.head_block_num
+
+    def wait_blocks(self, n: int, **kwargs):
         '''Waits for a specific number of blocks to be produced.
 
         :param n: Number of blocks to wait for.
@@ -1288,7 +1299,7 @@ class CLEOS:
         :return: None
         '''
         target_block = int(self.head_block_num) + n
-        self.wait_block(target_block)
+        self.wait_block(target_block, **kwargs)
 
 
     '''Token managment
