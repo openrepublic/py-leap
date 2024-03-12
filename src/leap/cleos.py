@@ -2,16 +2,17 @@
 
 import sys
 import time
-import json
 import base64
 import logging
 import requests
 import binascii
+import json as json_module
 
 from copy import deepcopy
-from urllib3.util.retry import Retry
+from typing import Any
 from pathlib import Path
 from hashlib import sha256
+from urllib3.util.retry import Retry
 
 from datetime import datetime, timedelta
 
@@ -20,9 +21,10 @@ import asks
 from requests.adapters import HTTPAdapter
 
 from .sugar import random_leap_name
-from .errors import ContractDeployError, TransactionPushError
+from .errors import ChainHTTPError, ChainAPIError, ContractDeployError, TransactionPushError
 from .tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
 from .protocol import *
+
 
 # disable warnings about connection retries
 logging.getLogger("urllib3").setLevel(logging.ERROR)
@@ -80,7 +82,7 @@ class CLEOS:
 
     def load_abi_file(self, account: str, abi_path: str | Path):
         with open(abi_path, 'rb') as abi_file:
-            self.load_abi(account, json.load(abi_file))
+            self.load_abi(account, json_module.load(abi_file))
 
     def get_loaded_abi(self, account: str) -> dict:
         if account not in self._loaded_abis:
@@ -90,6 +92,19 @@ class CLEOS:
 
     # generic http+session handlers
 
+    def _unwrap_response(self, maybe_error: Any) -> dict:
+        if not hasattr(maybe_error, 'json'):
+            return maybe_error
+
+        maybe_error = maybe_error.json()
+
+        if ChainHTTPError.is_json_error(maybe_error):
+            err = ChainAPIError.from_json(maybe_error['error'])
+            self.logger.error(repr(err))
+            raise err
+
+        return maybe_error
+
     def _session_method(
         self,
         method: str,
@@ -97,19 +112,48 @@ class CLEOS:
         *args,
         base_route: str | None = None,
         is_async: bool = False,
+        params: dict | None = None,
+        json: dict | None = None,
+        data: str | None = None,
+        headers: dict[str, str] = {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+        },
         **kwargs
     ):
         if not isinstance(base_route, str):
             base_route = self.endpoint
 
+        _data = '{}'
+        if isinstance(data, str):
+            _data = data
+
+        elif isinstance(json, dict):
+            _data = json_module.dumps(json)
+
+        elif isinstance(params, dict):
+            _data = json_module.dumps(params)
+
+        kwargs['data'] = _data
+
         session = self._asession if is_async else self._session
-        return getattr(session, method)(base_route + route, *args, **kwargs)
+        return getattr(session, method)(base_route + route, *args, headers=headers, **kwargs)
 
     def _get(self, *args, **kwargs):
-        return self._session_method('get', *args, **kwargs)
+        return self._unwrap_response(
+            self._session_method('get', *args, is_async=False, **kwargs))
 
     def _post(self, *args, **kwargs):
-        return self._session_method('post', *args, **kwargs)
+        return self._unwrap_response(
+            self._session_method('post', *args, is_async=False, **kwargs))
+
+    async def _async_get(self, *args, **kwargs):
+        return self._unwrap_response(
+            await self._session_method('get', *args, is_async=True, **kwargs))
+
+    async def _async_post(self, *args, **kwargs):
+        return self._unwrap_response(
+            await self._session_method('post', *args, is_async=True, **kwargs))
 
     # tx send machinery
 
@@ -125,33 +169,17 @@ class CLEOS:
         retries: int = 2
     ) -> dict:
         res = {}
-        for _ in range(retries):
-            res = self._post(
-                '/v1/chain/push_transaction', json=tx).json()
+        for i in range(1, retries + 1):
+            try:
+                return self._post(
+                    '/v1/chain/push_transaction', json=tx)
 
-            logging.debug('sent tx: ')
-            logging.debug(json.dumps(tx, indent=4))
-            logging.debug('got resp: ')
-            logging.debug(json.dumps(res, indent=4))
+            except ChainAPIError as err:
+                if i == retries:  # that was last retry, raise
+                    raise TransactionPushError.from_other(err)
 
-            if 'error' in res:
-                continue
-
-            else:
-                return res
-
-        if not res:
-            err = TransactionPushError(f'Couldn\'t get a response for tx after {retries} tries')
-            logging.error(err.message + ': ')
-            logging.error(json.dumps(tx, indent=4))
-            raise err
-
-        error = res.get('error', None)
-        if error is not None:
-            logging.error(json.dumps(error, indent=4))
-            raise TransactionPushError.from_json(error)
-
-        return res
+                else:
+                    continue
 
     async def _a_push_tx(
         self,
@@ -159,33 +187,17 @@ class CLEOS:
         retries: int = 2
     ) -> dict:
         res = {}
-        for _ in range(retries):
-            res = await self._post(
-                '/v1/chain/push_transaction', is_async=True, json=tx).json()
+        for i in range(1, retries + 1):
+            try:
+                return await self._apost(
+                    '/v1/chain/push_transaction', is_async=True, json=tx)
 
-            logging.debug('sent tx: ')
-            logging.debug(json.dumps(tx, indent=4))
-            logging.debug('got resp: ')
-            logging.debug(json.dumps(res, indent=4))
+            except ChainAPIError as err:
+                if i == retries:  # that was last retry, raise
+                    raise TransactionPushError.from_other(err)
 
-            if 'error' in res:
-                continue
-
-            else:
-                return res
-
-        if not res:
-            err = TransactionPushError(f'Couldn\'t get a response for tx after {retries} tries')
-            logging.error(err.message + ': ')
-            logging.error(json.dumps(tx, indent=4))
-            raise err
-
-        error = res.get('error', None)
-        if error is not None:
-            logging.error(json.dumps(error, indent=4))
-            raise TransactionPushError.from_json(error)
-
-        return res
+                else:
+                    continue
 
     def _create_signed_tx(
         self,
@@ -232,13 +244,7 @@ class CLEOS:
         :type key: str
         '''
         tx = self._create_signed_tx(actions, key, **kwargs)
-        try:
-            return self._push_tx(tx, retries=retries)
-
-        except TransactionPushError as err:
-            self.logger.error(f'error while pushing: ')
-            self.logger.error(json.dumps([a['account'] + '::' + a['name'] for a in actions], indent=4))
-            raise err
+        return self._push_tx(tx, retries=retries)
 
     def push_action(
         self,
@@ -463,7 +469,7 @@ class CLEOS:
             return res
 
         except TransactionPushError as err:
-            raise ContractDeployError(err.message)
+            raise ContractDeployError.from_other(err)
 
     def deploy_contract_from_path(
         self,
@@ -484,10 +490,21 @@ class CLEOS:
 
         abi = None
         with open(contract_path / f'{contract_name}.abi', 'rb') as abi_file:
-            abi = json.load(abi_file)
+            abi = json_module.load(abi_file)
 
         return self.deploy_contract(
             account_name, wasm, abi, **kwargs)
+
+    def get_account(
+        self,
+        account_name: str
+    ) -> dict:
+        return self._post(
+            '/v1/chain/get_account',
+            json={
+                'account_name': account_name
+            }
+        )
 
     def get_code(
         self,
@@ -499,17 +516,13 @@ class CLEOS:
         :type account_name: str
         :return: A tuple containing the hash and the decoded WASM code.
         :rtype: tuple[str, bytes]
-        :raises Exception: If the response contains an 'error' field.
         '''
         resp = self._post(
             '/v1/chain/get_raw_code_and_abi',
             json={
                 'account_name': account_name
             }
-        ).json()
-
-        if 'error' in resp:
-            raise Exception(resp)
+        )
 
         wasm = base64.b64decode(resp['wasm'])
         wasm_hash = sha256(wasm).hexdigest()
@@ -523,17 +536,13 @@ class CLEOS:
         :type account_name: str
         :return: An dictionary containing the ABI data.
         :rtype: dict
-        :raises Exception: If the response contains an 'error' field.
         '''
         resp = self._post(
             '/v1/chain/get_abi',
             json={
                 'account_name': account_name
             }
-        ).json()
-
-        if 'error' in resp:
-            raise Exception(resp)
+        )
 
         return resp['abi']
 
@@ -562,11 +571,7 @@ class CLEOS:
                     'lower_bound': lower_bound,
                     'upper_bound': lower_bound + step
                 }
-            ).json()
-
-            if 'activated_protocol_features' not in resp:
-                raise ChainAPIError(
-                    'expected activated_protocol_features field on get_node_activations response')
+            )
 
             features += resp['activated_protocol_features']
             lower_bound += step
@@ -591,7 +596,7 @@ class CLEOS:
 
         self.logger.info('activating features:')
         self.logger.info(
-            json.dumps(feature_names, indent=4))
+            json_module.dumps(feature_names, indent=4))
 
         actions = [{
             'account': 'eosio',
@@ -660,7 +665,7 @@ class CLEOS:
             wasm_file.write(wasm)
 
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
-            abi_file.write(json.dumps(abi))
+            abi_file.write(json_module.dumps(abi))
 
 
     def boot_sequence(
@@ -790,7 +795,7 @@ class CLEOS:
         :return: Response from the `/v1/producer/paused` endpoint.
         :rtype: dict
         '''
-        return self._post('/v1/producer/paused').json()
+        return self._post('/v1/producer/paused')
 
     def resume_block_production(self):
         '''Resumes block production.
@@ -798,7 +803,7 @@ class CLEOS:
         :return: Response from the `/v1/producer/resume` endpoint.
         :rtype: dict
         '''
-        return self._post('/v1/producer/resume').json()
+        return self._post('/v1/producer/resume')
 
     def pause_block_production(self):
         '''Pauses block production.
@@ -806,7 +811,7 @@ class CLEOS:
         :return: Response from the `/v1/producer/pause` endpoint.
         :rtype: dict
         '''
-        return self._post('/v1/producer/pause').json()
+        return self._post('/v1/producer/pause')
 
     # Net API
 
@@ -816,7 +821,7 @@ class CLEOS:
         :return: Response from the `/v1/net/connections` endpoint.
         :rtype: dict
         '''
-        return self._post('/v1/net/connections').json()
+        return self._post('/v1/net/connections')
 
     def connect_node(self, endpoint: str):
         '''Connects to a specified node.
@@ -828,7 +833,7 @@ class CLEOS:
         '''
         return self._post(
             '/v1/net/connect',
-            json=endpoint).json()
+            json=endpoint)
 
     def disconnect_node(self, endpoint: str):
         '''Disconnects from a specified node.
@@ -840,7 +845,7 @@ class CLEOS:
         '''
         return self._post(
             '/v1/net/disconnect',
-            json=endpoint).json()
+            json=endpoint)
 
     def create_key_pair(self) -> tuple[str, str]:
         '''Generates a key pair.
@@ -915,7 +920,7 @@ class CLEOS:
         resp = self._post(
             '/v1/producer/get_supported_protocol_features',
             json={}
-        ).json()
+        )
         assert isinstance(resp, list)
 
         for item in resp:
@@ -940,7 +945,7 @@ class CLEOS:
             json={
                 'protocol_features_to_activate': [digest]
             }
-        ).json()
+        )
 
         assert 'result' in r
         assert r['result'] == 'ok'
@@ -1127,12 +1132,7 @@ class CLEOS:
         }
         while not done:
             resp = self._post(
-                '/v1/chain/get_table_rows', json=params).json()
-
-            if 'code' in resp and resp['code'] != 200:
-                resp = json.dumps(resp, indent=4)
-                self.logger.critical(resp)
-                raise ChainAPIError(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
+                '/v1/chain/get_table_rows', json=params)
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
             rows.extend(resp['rows'])
@@ -1162,12 +1162,7 @@ class CLEOS:
 
         while not done:
             resp = await (self._post(
-                '/v1/chain/get_table_rows', is_async=True, json=params)).json()
-
-            if 'code' in resp and resp['code'] != 200:
-                resp = json.dumps(resp, indent=4)
-                self.logger.critical(resp)
-                raise ChainAPIError(f'get_table: {account} {scope} {table}\n{kwargs}\n{resp}')
+                '/v1/chain/get_table_rows', is_async=True, json=params))
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
             rows.extend(resp['rows'])
@@ -1192,7 +1187,7 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: dict[str, str | int]
         '''
-        return self._get('/v1/chain/get_info').json()
+        return self._get('/v1/chain/get_info')
 
     async def a_get_info(self) -> dict[str, str | int]:
         '''Get blockchain statistics.
@@ -1209,7 +1204,7 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: dict[str, str | int]
         '''
-        return await self._aget('/v1/chain/get_info').json()
+        return await self._aget('/v1/chain/get_info')
 
     def get_resources(self, account: str) -> list[dict]:
         '''Get account resources.
@@ -1274,7 +1269,28 @@ class CLEOS:
             payer
         )
 
-    def wait_blocks(self, n: int):
+    @property
+    def head_block_num(self) -> int:
+        return self.get_info()['head_block_num']
+
+    def wait_block(self, block_num: int, progress: bool = False, interval: float = .5):
+        '''Wait for specific block to be reached on node.
+        '''
+        current_block = self.head_block_num
+
+        last_report = -1000
+        def report():
+            self.logger.info(f'waiting for block {block_num}, current: {current_block}, remaining: {block_num - current_block}')
+            last_report = current_block
+
+        while current_block < block_num:
+            if current_block - last_report > 1000:
+                report()
+
+            time.sleep(interval)
+            current_block = self.head_block_num
+
+    def wait_blocks(self, n: int, **kwargs):
         '''Waits for a specific number of blocks to be produced.
 
         :param n: Number of blocks to wait for.
@@ -1282,16 +1298,8 @@ class CLEOS:
 
         :return: None
         '''
-        target_block = int(self.get_info()['head_block_num']) + n
-
-        while True:
-            current_block = int(self.get_info()['head_block_num'])
-            if current_block >= target_block:
-                break
-
-            remaining_blocks = target_block - current_block
-            wait_time = remaining_blocks * 0.5
-            time.sleep(wait_time)
+        target_block = int(self.head_block_num) + n
+        self.wait_block(target_block, **kwargs)
 
 
     '''Token managment
@@ -1363,9 +1371,6 @@ class CLEOS:
         :param token_contract: Name of the token contract, defaults to 'eosio.token'.
         :type token_contract: str
         :param kwargs: Additional keyword arguments.
-
-        :return: tuple containing error code and response.
-        :rtype: tuple[int, dict]
         '''
 
         return self.push_action(
@@ -1396,9 +1401,6 @@ class CLEOS:
         :param token_contract: Name of the token contract, defaults to 'eosio.token'.
         :type token_contract: str
         :param kwargs: Additional keyword arguments.
-
-        :return: tuple containing error code and response.
-        :rtype: tuple[int, dict]
         '''
 
         return self.push_action(
@@ -1432,9 +1434,6 @@ class CLEOS:
         :param token_contract: Name of the token contract, defaults to 'eosio.token'.
         :type token_contract: str
         :param kwargs: Additional keyword arguments.
-
-        :return: tuple containing error code and response.
-        :rtype: tuple[int, dict]
         '''
         return self.push_action(
             token_contract,
@@ -1629,7 +1628,7 @@ class CLEOS:
         :rtype: dict
         '''
         return self._post(
-            f'{self.url}/v1/chain/get_producer_schedule').json()
+            f'{self.url}/v1/chain/get_producer_schedule')
 
     def get_producers(self):
         '''Fetches information on producers.

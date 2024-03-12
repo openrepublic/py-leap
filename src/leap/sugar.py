@@ -166,6 +166,7 @@ def download_with_progress_bar(url: str, file_path: Path) -> None:
     if not TQDM_AVAILABLE:
         raise ImportError('tqdm is not installed')
 
+    import requests
     response = requests.get(url, stream=True)
     total_size = int(response.headers.get('content-length', 0))
     block_size = 1024
