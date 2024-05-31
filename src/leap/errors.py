@@ -3,13 +3,18 @@
 from typing import Any
 
 
+CONSOLE_HEADER = 'pending console output: '
+
+
 class SerializationException(Exception):
     ...
 
 
 class ChainAPIError(Exception):
     '''
-    example error:
+    example errors:
+
+    nodeos 4.x:
     {
         "code": 3050003,
         "name": "eosio_assert_message_exception",
@@ -26,6 +31,28 @@ class ChainAPIError(Exception):
                 "file": "apply_context.cpp",
                 "line_number": 124,
                 "method": "exec_one"
+            }
+        ]
+    }
+
+
+    nodeos 5.x:
+    {
+        'code': 3050003,
+        'name': 'eosio_assert_message_exception',
+        'what': 'eosio_assert_message assertion failure',
+        'details': [
+            {
+                'message': 'assertion failure with message: {eosio::check msg}',
+                'file': 'cf_system.cpp',
+                'line_number': 14,
+                'method': 'eosio_assert'
+            },
+            {
+                'message': '{contract_name} <= {contract_name}::{contract_action} pending console output: hello world!',
+                'file': 'apply_context.cpp',
+                'line_number': 134,
+                'method': 'exec_one'
             }
         ]
     }
@@ -50,8 +77,9 @@ class ChainAPIError(Exception):
         self.pending_output: str = ''
         for detail in self.details:
             msg = detail['message']
-            if 'pending console output: ' in msg:
-                self.pending_output = msg.replace('pending console output: ', '')
+            index = msg.find(CONSOLE_HEADER)
+            if index != -1:
+                self.pending_output = msg[index + len(CONSOLE_HEADER):]
 
             else:
                 detail_msg = detail['message']
