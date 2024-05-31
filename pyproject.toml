@@ -11,7 +11,7 @@ python = '>=3.9'
 asks = '^3.0.0'
 base58 = '^2.1.1'
 cryptos = '^2.0.9'
-requests = '^2.31.0'
+requests = '<2.32.0'
 
 [tool.poetry.group.docs]
 optional = true
