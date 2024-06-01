@@ -113,10 +113,18 @@ def get_free_port(tries=10):
 
 
 def download_latest_snapshot(
-    target_path: Path, network='telos', version='v6'
+    target_path: Path, network='telos', version='v6',
+    user_agent: str = 'py-leap: python antelope client'
 ):
     import requests
-    from urllib.request import urlretrieve
+    from urllib.request import ProxyHandler, urlretrieve, build_opener, install_opener
+
+    proxy = ProxyHandler({})
+    opener = build_opener(proxy)
+    opener.addheaders = [
+        ('User-Agent', user_agent)
+    ]
+    install_opener(opener)
     import zstandard as zstd
 
     _repository_url = 'https://snapshots.eosnation.io'
@@ -156,6 +164,7 @@ import os
 import tarfile
 import logging
 
+
 def download_with_progress_bar(url: str, file_path: Path) -> None:
     try:
         from tqdm import tqdm
@@ -180,7 +189,8 @@ def download_with_progress_bar(url: str, file_path: Path) -> None:
 def download_snapshot(
     target_path: Path, block_number: int,
     network: str = 'mainnet', progress: bool = False,
-    force_download: bool = False
+    force_download: bool = False,
+    user_agent: str = 'py-leap: python antelope client'
 ) -> Path | None:
     """Download the closest snapshot for a given block number.
 
@@ -195,8 +205,16 @@ def download_snapshot(
         Path | None: The path to the downloaded snapshot, or None if not found.
     """
     from bs4 import BeautifulSoup
-    from urllib.request import urlretrieve
     import requests
+
+    from urllib.request import ProxyHandler, urlretrieve, build_opener, install_opener
+
+    proxy = ProxyHandler({})
+    opener = build_opener(proxy)
+    opener.addheaders = [
+        ('User-Agent', user_agent)
+    ]
+    install_opener(opener)
 
     if network == 'mainnet':
         _repository_url = 'https://snapshots.telosunlimited.io/'
