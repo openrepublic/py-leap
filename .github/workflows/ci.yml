@@ -5,7 +5,7 @@ on: [push]
 jobs:
   auto-tests:
     name: Pytest Tests
-    runs-on: ubuntu-20.04
+    runs-on: ubuntu-22.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v2
@@ -27,7 +27,7 @@ jobs:
           key: venv-${{ hashFiles('poetry.lock') }}
 
       - name: Install with dev
-        run: poetry install --with=dev
+        run: poetry install --with=dev --with=snaps
 
       - name: Run simple tests
         run: |
