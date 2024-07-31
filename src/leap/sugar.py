@@ -161,8 +161,9 @@ def download_latest_snapshot(
 
 
 import os
-import tarfile
 import logging
+
+from zstandard import ZstdDecompressor
 
 
 def download_with_progress_bar(url: str, file_path: Path) -> None:
@@ -188,7 +189,8 @@ def download_with_progress_bar(url: str, file_path: Path) -> None:
 
 def download_snapshot(
     target_path: Path, block_number: int,
-    network: str = 'mainnet', progress: bool = False,
+    network: str = 'Telos Mainnet - v6',
+    progress: bool = False,
     force_download: bool = False,
     user_agent: str = 'py-leap: python antelope client'
 ) -> Path | None:
@@ -209,6 +211,8 @@ def download_snapshot(
 
     from urllib.request import ProxyHandler, urlretrieve, build_opener, install_opener
 
+    target_path = Path(target_path)
+
     proxy = ProxyHandler({})
     opener = build_opener(proxy)
     opener.addheaders = [
@@ -216,40 +220,45 @@ def download_snapshot(
     ]
     install_opener(opener)
 
-    if network == 'mainnet':
-        _repository_url = 'https://snapshots.telosunlimited.io/'
-    else:
-        _repository_url = 'https://snapshots.testnet.telosunlimited.io/'
+    _repository_url = 'https://snapshots.eosnation.io/'
 
     logging.info('Fetching snapshot list...')
     response = requests.get(_repository_url)
     soup = BeautifulSoup(response.text, 'html.parser')
 
-    # Get all snapshots and sort them in descending order by block number
-    snapshots = []
-    for row in soup.find('table', {'id': 'list'}).find('tbody').find_all('tr'):
-        file_name = row.find('a').text
-        if file_name.endswith('.tar.gz') and 'blk-' in file_name:
+    network_card = None
+    for card in soup.find_all('div', class_='card'):
+        if network.lower() in card.text.lower():
+            network_card = card
+            break
+
+    if not network_card:
+        raise ValueError('No suitable snapshot found.')
+
+    closest_block = None
+    file_url = None
+    min_diff = float('inf')
+
+    for li in network_card.find_all('li'):
+        link = li.find('a')['href']
+        if 'snapshot' in link:
+            block_str = link.split('-')[-1].split('.')[0]
             try:
-                snapshot_block_num = int(file_name.split('blk-')[-1].split('.')[0])
-                snapshots.append((snapshot_block_num, file_name))
+                block_num = int(block_str)
+                diff = block_number - block_num
+                if diff >= 0 and diff < min_diff:
+                    min_diff = diff
+                    closest_block = block_num
+                    file_url = link
             except ValueError:
                 continue
 
-    snapshots.sort(reverse=True, key=lambda x: x[0])
-
-    # Find the snapshot with the highest block number that is <= specified block number
-    closest_snapshot = None
-    for snapshot_block_num, file_name in snapshots:
-        if snapshot_block_num <= block_number:
-            closest_snapshot = file_name
-            break
-
-    if closest_snapshot is None:
+    if not file_url:
         raise ValueError('No suitable snapshot found.')
 
     # Determine the final .bin file name
-    final_bin_file_name = closest_snapshot.split('.tar.gz')[0] + '.snapshot.bin'
+    closest_snapshot = file_url.split('/')[-1]
+    final_bin_file_name = closest_snapshot.split('.bin.zst')[0] + '.snapshot.bin'
     final_bin_file_path = target_path / final_bin_file_name
 
     # Check if the .bin file already exists
@@ -258,7 +267,6 @@ def download_snapshot(
         return final_bin_file_path
 
     # Download the file
-    file_url = _repository_url + closest_snapshot
     file_path = target_path / closest_snapshot
     logging.info(f'Downloading snapshot: {file_url}')
 
@@ -268,21 +276,16 @@ def download_snapshot(
         urlretrieve(file_url, file_path)
 
     # Decompress the tar.gz
-    temp_extract_path = target_path / file_path.stem
-    logging.info(f'Decompressing snapshot to: {temp_extract_path}')
-    with tarfile.open(file_path, 'r:gz') as tar_ref:
-        tar_ref.extractall(path=temp_extract_path)
+    logging.info(f'Decompressing snapshot to: {final_bin_file_path}')
 
-    # Move and rename the .bin file
-    temp_extract_path = target_path / file_path.stem
-    bin_file_name = next(f for f in os.listdir(temp_extract_path) if f.endswith('.bin'))
-    bin_file_path = temp_extract_path / bin_file_name
-    os.rename(bin_file_path, final_bin_file_path)
+    with open(file_path, 'rb') as compressed_file:
+        dctx = ZstdDecompressor()
+        with open(final_bin_file_path, 'wb') as output_file:
+            dctx.copy_stream(compressed_file, output_file)
 
     # Clean up temporary files and directories
     logging.info('Cleaning up temporary files...')
     file_path.unlink()
-    os.rmdir(temp_extract_path)
 
     logging.info('Operation completed successfully.')
     return final_bin_file_path
