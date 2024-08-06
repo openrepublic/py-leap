@@ -1628,7 +1628,7 @@ class CLEOS:
         :rtype: dict
         '''
         return self._post(
-            f'{self.url}/v1/chain/get_producer_schedule')
+            f'/v1/chain/get_producer_schedule')
 
     def get_producers(self):
         '''Fetches information on producers.
