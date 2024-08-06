@@ -78,13 +78,19 @@ class CLEOS:
     # local abi store methods
 
     def load_abi(self, account: str, abi: dict):
+        '''Load abi dict into internal store
+        '''
         self._loaded_abis[account] = abi
 
     def load_abi_file(self, account: str, abi_path: str | Path):
+        '''Load abi file into internal store
+        '''
         with open(abi_path, 'rb') as abi_file:
             self.load_abi(account, json_module.load(abi_file))
 
     def get_loaded_abi(self, account: str) -> dict:
+        '''Return a previously loaded abi
+        '''
         if account not in self._loaded_abis:
             raise ValueError(f'ABI for {account} not loaded!')
 
@@ -478,6 +484,8 @@ class CLEOS:
         contract_name: str | None = None,
         **kwargs
     ):
+        '''Deploy a contract from a filesystem directory
+        '''
         if not contract_name:
             contract_name = Path(contract_path).parts[-1]
 
@@ -499,6 +507,8 @@ class CLEOS:
         self,
         account_name: str
     ) -> dict:
+        '''Call /v1/chain/get_account
+        '''
         return self._post(
             '/v1/chain/get_account',
             json={
@@ -547,18 +557,24 @@ class CLEOS:
         return resp['abi']
 
     def create_snapshot(self, body: dict):
+        '''Create a snapshot, must have producer_plugin_api enabled
+        '''
         return self._post(
             '/v1/producer/create_snapshot',
             json=body
         )
 
     def schedule_snapshot(self, body: dict):
+        '''Schedule snapshot creation, must have producer_plugin_api enabled
+        '''
         return self._post(
             '/v1/producer/schedule_snapshot',
             json=body
         )
 
     def get_node_activations(self) -> list[dict]:
+        '''Get activated protocol features
+        '''
         lower_bound = 0
         step = 250
         more = True
@@ -1149,6 +1165,8 @@ class CLEOS:
         table: str,
         **kwargs
     ) -> list[dict]:
+        '''Async get table
+        '''
 
         done = False
         rows = []
@@ -1190,7 +1208,7 @@ class CLEOS:
         return self._get('/v1/chain/get_info')
 
     async def a_get_info(self) -> dict[str, str | int]:
-        '''Get blockchain statistics.
+        '''Async get blockchain statistics.
 
             - ``server_version``
             - ``head_block_num``
