@@ -1,20 +1,15 @@
 #!/usr/bin/env python3
 
-import sys
 import time
 import base64
 import logging
 import requests
-import binascii
 import json as json_module
 
-from copy import deepcopy
 from typing import Any
 from pathlib import Path
 from hashlib import sha256
 from urllib3.util.retry import Retry
-
-from datetime import datetime, timedelta
 
 import asks
 

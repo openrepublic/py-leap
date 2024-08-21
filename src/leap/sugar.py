@@ -6,7 +6,6 @@ import socket
 import string
 import random
 import logging
-import tarfile
 
 from pathlib import Path
 
@@ -160,7 +159,6 @@ def download_latest_snapshot(
     return block_num, dec_file_path
 
 
-import os
 import logging
 
 from zstandard import ZstdDecompressor
