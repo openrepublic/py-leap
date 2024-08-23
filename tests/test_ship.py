@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+from contextlib import aclosing
 from leap.ship import open_state_history
 
 
@@ -13,7 +14,8 @@ async def test_ship():
         end_block_num=60
     )
 
-    async for block in stream:
-        block_num = block['this_block']['block_num']
-        print(block_num)
+    async with aclosing(stream):
+        async for block in stream:
+            block_num = block[1]['this_block']['block_num']
+            print(block_num)
 
