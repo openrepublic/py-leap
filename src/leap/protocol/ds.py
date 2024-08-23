@@ -2,21 +2,36 @@
 # https://github.com/EOSArgentina/ueosio
 # Much apreciated!!
 
-from functools import partial
 import io
+import os
 import struct
 import hashlib
+import inspect
 import binascii
 import calendar
 
 from copy import deepcopy
 from base58 import b58decode, b58encode
 from datetime import datetime
+from functools import partial
 from collections import OrderedDict
 
+import msgspec
+
 from leap.protocol.abi import ABI, ABIStruct, ABIVariant
+from leap.protocol.types import Asset
 
 from ..errors import SerializationException
+
+
+package_dir = os.path.dirname(__file__)
+abi_file_path = os.path.join(package_dir, 'std_abi.json')
+
+def load_std_abi() -> ABI:
+    with open(abi_file_path, 'r') as file:
+        return msgspec.json.decode(file.read(), type=ABI)
+
+STD_ABI = load_std_abi()
 
 
 def ripmed160(data):
@@ -113,8 +128,8 @@ class DataStream():
         if not stream:
             stream = io.BytesIO()
         else:
-            self.remaining = len(stream)
             stream = io.BytesIO(stream)
+            self.remaining = len(stream.getvalue())
 
         self.stream = stream
 
@@ -123,8 +138,19 @@ class DataStream():
         self.remaining += len(v)
 
     def read(self, n):
-        self.remaining -= n
-        return self.stream.read(n)
+        try:
+            raw = self.stream.read(n)
+            raw_len = len(raw)
+
+            if raw_len != n:
+                raise ValueError(f'Tried to read {n} but only got {raw_len}')
+
+            self.remaining -= n
+            return raw
+
+        except Exception as e:
+            e.add_note(f'stream read with {self.remaining} remaining')
+            raise e
 
     def getvalue(self) -> bytes:
         return self.stream.getvalue()
@@ -255,11 +281,12 @@ class DataStream():
         t = self.unpack_uint32()
         return datetime.fromtimestamp(t).strftime('%Y-%m-%dT%H:%M:%S')
 
-    def pack_block_timestamp_type(self, v):
-        raise Exception("not implementd")
+    def pack_block_timestamp_type(self, ms):
+        t = (ms - 946684800000) // 500
+        self.pack_uint32(t)
 
-    def unpack_block_timestamp_type(self):
-        raise Exception("not implementd")
+    def unpack_block_timestamp_type(self) -> int:
+        return (self.unpack_uint32() * 500) + 946684800000
 
     def pack_account_name(self, v):
         self.pack_uint64(string_to_name(v))
@@ -383,6 +410,8 @@ class DataStream():
         return uint64_to_symbol_code(self.unpack_uint64())
 
     def pack_asset(self, v):
+        if isinstance(v, Asset):
+            v = str(v)
         a, s = asset_to_uint64_pair(v)
         self.pack_int64(a)
         self.pack_uint64(s)
@@ -429,18 +458,7 @@ class DataStream():
 
 
 STANDARD_TYPES = [
-    'bool',
-    'int8', 'int16', 'int32', 'int64', 'int128',
-    'uint8', 'uint16', 'uint32', 'uint64', 'uint128',
-    'varint32', 'varuint32',
-    'float32', 'float64', 'float128',
-    'time_point', 'time_point_sec',
-    'name', 'account_name',
-    'bytes', 'string',
-    'checksum160', 'checksum256', 'checksum512',
-    'public_key', 'signature',
-    'symbol', 'symbol_code', 'asset', 'extended_asset',
-    'rd160', 'sha256'
+    name[5:] for name, fn in inspect.getmembers(DataStream, inspect.isfunction)
 ]
 
 
@@ -469,19 +487,22 @@ class TypeDescriptor:
         self,
         type_name: str,
         strip_name: str,
-        struct: ABIStruct | None
+        struct: ABIStruct | None,
+        variant: ABIVariant | None
     ):
         self.type_name = type_name
         self.strip_name = strip_name
+        self.struct = struct
+        self.variant = variant
+
         self.is_array = has_array_type_mod(type_name)
         self.is_optional = has_optional_type_mod(type_name)
         self.is_extension = has_extension_type_mod(type_name)
-        self.struct = struct
 
 
 class ABIDataStream(DataStream):
 
-    def __init__(self, abi: ABI, *args):
+    def __init__(self, *args, abi: ABI = STD_ABI):
         super().__init__(*args)
         self.abi = abi
 
@@ -502,20 +523,12 @@ class ABIDataStream(DataStream):
             raise ValueError(f'struct {name} not found in ABI')
 
         if isinstance(struct.base, str):
-            base_struct = self.resolve_struct(struct.base)
-            struct.fields = base_struct.fields + struct.fields
+            if len(struct.base) > 0:
+                base_struct = self.resolve_struct(struct.base)
+                struct.fields = base_struct.fields + struct.fields
+            struct.base = None
 
         return struct
-
-    def resolve_type(self, name: str) -> TypeDescriptor:
-        sname = strip_type_mods(name)
-        sname = self.resolve_alias(sname)
-        struct = None
-
-        if sname not in STANDARD_TYPES:
-            struct = self.resolve_struct(sname)
-
-        return TypeDescriptor(name, sname, struct)
 
     def resolve_variant(self, name: str) -> ABIVariant:
         variant = next(
@@ -527,102 +540,120 @@ class ABIDataStream(DataStream):
 
         return variant
 
-    def pack_type(self, desc: TypeDescriptor, v):
+    def resolve_type(self, name: str) -> TypeDescriptor:
+        sname = strip_type_mods(name)
+        sname = self.resolve_alias(sname)
+        struct = None
+        variant = None
+
+        if sname not in STANDARD_TYPES:
+            try:
+                variant = self.resolve_variant(sname)
+
+            except ValueError:
+                struct = self.resolve_struct(sname)
+
+        return TypeDescriptor(name, sname, struct, variant)
+
+    def pack_struct(self, struct_def: ABIStruct, v):
+        for field in struct_def.fields:
+            fname, ftype = (field.name, field.type)
+            if fname in v:
+                self.pack_type(ftype, v[fname])
+
+    def unpack_struct(self, struct_def: ABIStruct) -> OrderedDict:
+        res = OrderedDict()
+        for field in struct_def.fields:
+            fname, ftype = (field.name, field.type)
+            try:
+                res[fname] = self.unpack_type(ftype)
+
+            except Exception as e:
+                e.add_note(f'trying to unpack struct {struct_def.name}')
+                for key, val in res.items():
+                    e.add_note(f'\t\"{key}\": {val}')
+
+                e.add_note(f'\t\"{fname}\":  <- error during unpack of this field')
+                raise e
+
+        return res
+
+    def pack_type(self, type_name: str, v):
+        desc = self.resolve_type(type_name)
+
         if desc.is_array:
             assert isinstance(v, list)
             amount = len(v)
-            desc.type_name = desc.type_name.strip('[]')
-            desc.is_array = False
             self.pack_varuint32(amount)
             for i in v:
-                self.pack_type(desc, i)
+                self.pack_type(desc.strip_name, i)
             return
 
         if desc.is_optional:
             self.pack_uint8(0 if v is None else 1)
 
+        if desc.variant:
+            assert isinstance(v, tuple)
+            assert len(v) == 2
+            sub_name, v = v
+            self.pack_uint8(desc.variant.types.index(sub_name))
+            desc.struct = self.resolve_struct(sub_name)
+
         # find right packing function
         pack_partial = None
         if desc.struct:
             pack_partial = partial(
-                self.pack_struct, desc.strip_name)
+                self.pack_struct, desc.struct)
 
         else:
             pack_fn = getattr(self, f'pack_{desc.strip_name}')
             pack_partial = partial(pack_fn)
 
-        pack_partial(v)
+        try:
+            pack_partial(v)
+
+        except Exception as e:
+            e.add_note(f'trying to pack {type_name}')
+            raise e
 
 
-    def unpack_type(self, desc: TypeDescriptor):
+    def unpack_type(self, type_name: str):
+        desc = self.resolve_type(type_name)
+
         if desc.is_array:
-            desc.type_name = desc.type_name.strip('[]')
-            desc.is_array = False
             amount = self.unpack_varuint32()
-            return [self.unpack_type(desc) for _ in range(amount)]
+            return [
+                self.unpack_type(desc.strip_name)
+                for _ in range(amount)
+            ]
 
         if desc.is_optional:
             if self.unpack_uint8() == 0:
-                return
+                return None
 
         if desc.is_extension and self.remaining == 0:
             return None
+
+        if desc.variant:
+            i = self.unpack_uint8()
+            desc.struct = self.resolve_struct(desc.variant.types[i])
 
         # find right unpacking function
         unpack_partial = None
         if desc.struct:
             unpack_partial = partial(
-                self.unpack_struct, desc.strip_name)
+                self.unpack_struct, desc.struct)
 
         else:
             unpack_fn = getattr(self, f'unpack_{desc.strip_name}')
             unpack_partial = partial(unpack_fn)
 
-        return unpack_partial()
+        try:
+            return unpack_partial()
 
-
-    def pack_struct(self, name: str, v):
-        sdesc = self.resolve_type(name)
-
-        if not sdesc.struct:
-            raise ValueError(f'struct {name} not found in ABI')
-
-        for field in sdesc.struct.fields:
-            fname, ftype = (field.name, field.type)
-            fdesc = self.resolve_type(ftype)
-            self.pack_type(fdesc, v[fname])
-
-    def unpack_struct(self, name: str) -> OrderedDict:
-        sdesc = self.resolve_type(name)
-
-        if not sdesc.struct:
-            raise ValueError(f'struct {name} not found in ABI')
-
-        res = OrderedDict()
-        for field in sdesc.struct.fields:
-            fname, ftype = (field.name, field.type)
-            fdesc = self.resolve_type(ftype)
-            res[fname] = self.unpack_type(fdesc)
-
-        return res
-
-    def pack_variant(self, name: str, v: tuple):
-        assert isinstance(v, tuple)
-        assert len(v) == 2
-        sub_name, value = v
-        variant = self.resolve_variant(name)
-        i = variant.types.index(sub_name)
-        self.pack_uint8(i)
-        self.pack_struct(sub_name, value)
-
-    def unpack_variant(self, name: str) -> tuple[str, OrderedDict]:
-        variant = self.resolve_variant(name)
-        i = self.unpack_uint8()
-        sub_name = variant.types[i]
-        return (
-            sub_name,
-            self.unpack_struct(sub_name)
-        )
+        except Exception as e:
+            e.add_note(f'trying to unpack {type_name}')
+            raise e
 
 
 import struct
@@ -719,8 +750,8 @@ def sign_tx(chain_id, tx, pk):
     ds = DataStream()
     ds.pack_checksum256(chain_id)
 
-    dsp = DataStream()
-    dsp.pack_transaction(tx)
+    dsp = ABIDataStream()
+    dsp.pack_type('transaction', tx)
     packed_trx = dsp.getvalue()
 
     ds.write(packed_trx)
@@ -733,7 +764,7 @@ def sign_tx(chain_id, tx, pk):
 
     m = hashlib.sha256()
     m.update(packed_trx)
-    tx_id = binascii.hexlify(m.digest()).decode('utf-8')
+    tx_id = m.digest().hex()
 
     return tx_id, tx
 
@@ -805,70 +836,28 @@ def create_tx(chain_id, block_id, expiration, privkey, fn_action_builder, params
     return tx_id, signed_tx
 
 # given an abi and action data, return serialized data in hexstr format
-def pack_abi_data(abi: dict, action: dict) -> str:
-    ds = DataStream()
+def pack_abi_data(abi: dict, action: dict) -> bytes:
+    ds = ABIDataStream(abi=msgspec.convert(abi, type=ABI))
     account = action['account']
     name = action['name']
     data = action['data']
 
-    if 'structs' not in abi:
-        raise SerializationException(f'expected abi to have \"structs\" key!')
+    try:
+        struct = ds.resolve_struct(name)
+        params = OrderedDict()
+        for f in struct.fields:
+            if len(data) == 0:
+                break
+            params[f.name] = data.pop(0)
 
-    struct = [s for s in abi['structs'] if s['name'] == name]
+        ds.pack_type(name, params)
 
-    if len(struct) != 1:
-        raise SerializationException(f'expected only one struct def for {name}')
+        return ds.getvalue()
 
-    struct = struct[0]
-    struct_fields = {f['name']: f['type'] for f in struct['fields']}
-
-    if isinstance(data, list):
-        key_iter = iter(struct_fields.keys())
-        value_iter = iter(data)
-
-    else:
-        raise SerializationException(f'only list is supported as action params container')
-
-    for _ in range(len(data)):
-        field_name = next(key_iter)
-        value = next(value_iter)
-
-        typ = struct_fields.get(field_name, None)
-        if typ is None:
-            raise SerializationException(
-                f'expected field \"{field_name}\" to be in {list(struct_fields.keys())}')
-
-        fn_name = typ
-        pack_params = [value]
-
-        if typ[-2:] == '[]':
-            fn_name = 'array'
-            pack_params = [typ[:-2], value]
-
-        elif typ[-1] == '?':
-            fn_name = 'optional'
-            pack_params = [typ[:-1], value]
-
-        elif typ[-1] == '$':
-            pack_params = [typ[:-1], value]
-
-        elif (account == 'eosio' and
-                name =='setabi' and
-                field_name == 'abi'):
-
-            abi_raw = DataStream()
-            abi_raw.pack_abi(value)
-            pack_params = [abi_raw.getvalue()]
-            fn_name = 'bytes'
-
-        elif typ in ['name', 'asset', 'symbol']:
-            pack_params = [str(value)]
-
-        pack_fn = getattr(ds, f'pack_{fn_name}')
-        pack_fn(*pack_params)
-
-    return binascii.hexlify(
-        ds.getvalue()).decode('utf-8')
+    except Exception as e:
+        e.add_note(f'while trying to pack action data for {account}::{name}')
+        breakpoint()
+        raise e
 
 
 def create_and_sign_tx(
@@ -907,14 +896,14 @@ def create_and_sign_tx(
         'delay_sec': 0,
         'context_free_actions': [],
         'transaction_extensions': [],
-        'context_free_data': []
+        'context_free_data': [],
     })
 
     # sign transaction
     _, signed_tx = sign_tx(chain_id, tx, key)
 
     # pack
-    ds = DataStream()
-    ds.pack_transaction(signed_tx)
+    ds = ABIDataStream()
+    ds.pack_type('transaction', signed_tx)
     packed_trx = binascii.hexlify(ds.getvalue()).decode('utf-8')
     return build_push_transaction_body(signed_tx['signatures'][0], packed_trx)

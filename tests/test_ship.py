@@ -16,6 +16,6 @@ async def test_ship():
 
     async with aclosing(stream):
         async for block in stream:
-            block_num = block[1]['this_block']['block_num']
+            block_num = block['this_block']['block_num']
             print(block_num)
 

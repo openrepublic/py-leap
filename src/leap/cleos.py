@@ -176,6 +176,7 @@ class CLEOS:
                     '/v1/chain/push_transaction', json=tx)
 
             except ChainAPIError as err:
+                err.add_note(f'while pushing: {json_module.dumps(tx, indent=4)}')
                 if i == retries:  # that was last retry, raise
                     raise TransactionPushError.from_other(err)
 
@@ -437,6 +438,10 @@ class CLEOS:
 
         self.logger.info('deploy...')
 
+        ds = ABIDataStream()
+        ds.pack_type('abi', abi)
+        abi_bytes = ds.getvalue()
+
         actions = [{
             'account': 'eosio',
             'name': 'setcode',
@@ -454,7 +459,7 @@ class CLEOS:
             'name': 'setabi',
             'data': [
                 account_name,
-                abi
+                abi_bytes
             ],
             'authorization': [{
                 'actor': account_name,

@@ -1,6 +1,11 @@
 import msgspec
 
 
+class ABIType(msgspec.Struct):
+    new_type_name: str
+    type: str
+
+
 class ABIStructField(msgspec.Struct):
     type: str
     name: str
@@ -12,14 +17,10 @@ class ABIStruct(msgspec.Struct):
     base: str | None = None
 
 
-class ABIType(msgspec.Struct):
-    new_type_name: str
-    type: str
-
-
-class ABIVariant(msgspec.Struct):
+class ABIAction(msgspec.Struct):
     name: str
-    types: list[str]
+    type: str
+    ricardian_contract: str = ''
 
 
 class ABITable(msgspec.Struct):
@@ -28,9 +29,23 @@ class ABITable(msgspec.Struct):
     key_names: list[str]
 
 
+class ABIClause(msgspec.Struct):
+    id: str
+    body: str
+
+
+class ABIVariant(msgspec.Struct):
+    name: str
+    types: list[str]
+
+
 class ABI(msgspec.Struct):
     version: str
-    structs: list[ABIStruct]
-    types: list[ABIType]
-    variants: list[ABIVariant]
-    tables: list[ABITable]
+    types: list[ABIType] = []
+    structs: list[ABIStruct] = []
+    actions: list[ABIAction] = []
+    tables: list[ABITable] = []
+    ricardian_clauses: list[ABIClause] = []
+    error_messages: list[str] = []
+    abi_extensions: list[str] = []
+    variants: list[ABIVariant] = []

@@ -1,3 +1,5 @@
+from typing import OrderedDict
+
 import msgspec
 
 from leap.protocol.abi import ABI
@@ -18,6 +20,56 @@ def encode_ack(num_msgs: int) -> bytes:
     return bytes(ds.getvalue())
 
 
+def decode_block_result(blocks_bytes: bytes) -> tuple[int, OrderedDict]:
+    ds = ABIDataStream(blocks_bytes)
+    result: OrderedDict = ds.unpack_type('result')
+
+    block_num = result['this_block']['block_num']
+
+    try:
+        if result['block']:
+            ds = ABIDataStream(result['block'])
+            block: OrderedDict = ds.unpack_type('signed_block')
+            result['block'] = block
+
+        if result['deltas']:
+            ds = ABIDataStream(result['deltas'])
+            deltas: list[OrderedDict] = ds.unpack_type('table_delta[]')
+
+            for delta in deltas:
+                rows = delta['rows']
+                match delta['name']:
+                    case 'account':
+                        for row in rows:
+                            if row['present']:
+                                ds = ABIDataStream(row['data'])
+                                account_delta = ds.unpack_type('account')
+                                abi_raw = account_delta['abi']
+                                if len(abi_raw) > 0:
+                                    ds = ABIDataStream(abi_raw)
+                                    new_abi = msgspec.convert(
+                                        ds.unpack_type('abi'), type=ABI)
+
+                        break
+
+                    case 'contract_row':
+                        for row in rows:
+                            ds = ABIDataStream(row['data'])
+                            contract_delta = ds.unpack_type('contract_row')
+                            print(contract_delta)
+                        break
+
+        if result['traces']:
+            ds = ABIDataStream(result['traces'])
+            traces: list[OrderedDict] = ds.unpack_type('transaction_trace[]')
+
+    except Exception as e:
+        e.add_note(f'while decoding block {block_num}')
+        raise e
+
+    return block_num, result
+
+
 # generator, yields blocks
 async def open_state_history(
     endpoint: str,
@@ -36,19 +88,18 @@ async def open_state_history(
         message_queue_size=max_messages_in_flight
     ) as ws:
         # first message is ABI
-        abi_str  = await ws.get_message()
-        abi = msgspec.json.decode(abi_str, type=ABI)
+        _  = await ws.get_message()
 
         # send get_status_request
         await ws.send_message(encode_get_status_request())
 
         # receive get_status_result
-        ds = ABIDataStream(abi, (await ws.get_message()))
-        _ = ds.unpack_variant('result')
+        ds = ABIDataStream((await ws.get_message()))
+        _ = ds.unpack_type('result')
 
         # send get_blocks_request
-        ds = ABIDataStream(abi)
-        ds.pack_variant(
+        ds = ABIDataStream()
+        ds.pack_type(
             'request',
             (
                 'get_blocks_request_v0',
@@ -69,16 +120,12 @@ async def open_state_history(
         # receive blocks & manage acks
         acked_block = max_messages_in_flight + 1
         block_num = start_block_num - 1
-
         while block_num != end_block_num:
             # receive get_blocks_result
             blocks_bytes = await ws.get_message()
-            ds = ABIDataStream(abi, blocks_bytes)
-            block_result = ds.unpack_variant('result')
+            block_num, block = decode_block_result(blocks_bytes)
 
-            block_num = block_result[1]['this_block']['block_num']
-
-            yield block_result
+            yield block
 
             if acked_block == block_num:
                 # ack next batch of messages
