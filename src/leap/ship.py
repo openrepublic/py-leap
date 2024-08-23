@@ -1,11 +1,13 @@
+#!/usr/bin/env python3
+
 from typing import OrderedDict
 
 import msgspec
 
-from leap.protocol.abi import ABI
-from .protocol.ds import ABIDataStream, DataStream
-
 from trio_websocket import open_websocket_url
+
+from .protocol.ds import DataStream
+from .protocol.abi import ABI, ABIDataStream
 
 
 def encode_get_status_request() -> bytes:

@@ -15,10 +15,12 @@ import asks
 
 from requests.adapters import HTTPAdapter
 
+
 from .sugar import random_leap_name
 from .errors import ChainHTTPError, ChainAPIError, ContractDeployError, TransactionPushError
 from .tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
 from .protocol import *
+from .protocol.sign import create_and_sign_tx, get_tapos_info
 
 
 # disable warnings about connection retries
