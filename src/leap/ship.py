@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 from typing import OrderedDict
+from dataclasses import dataclass
 
 from trio_websocket import open_websocket_url
 
@@ -9,17 +10,20 @@ from leap.errors import SerializationException
 from .protocol.abi import ABI, STD_CONTRACT_ABIS, abi_pack, abi_unpack
 
 
+@dataclass
+class DecodedGetBlockResult:
+    block_num: int
+    header: OrderedDict
+    deltas: list[OrderedDict]
+    actions: list[OrderedDict]
+
+
 def decode_block_result(
     blocks_bytes: bytes,
     contracts: dict[str, ABI],
     delta_whitelist: dict[str, list[str]] = {},
     action_whitelist: dict[str, list[str]] = {}
-) -> tuple[
-    int,
-    OrderedDict,
-    list,
-    list
-]:
+) -> DecodedGetBlockResult:
     result = abi_unpack('result', blocks_bytes)
 
     block_num = result['this_block']['block_num']
@@ -115,7 +119,7 @@ def decode_block_result(
         e.add_note(f'while decoding block {block_num}')
         raise e
 
-    return block_num, result, decoded_deltas, decoded_actions
+    return DecodedGetBlockResult(block_num, result, decoded_deltas, decoded_actions)
 
 
 # generator, yields blocks
@@ -129,6 +133,7 @@ async def open_state_history(
     fetch_traces: bool = True,
     fetch_deltas: bool = True,
     max_message_size: int = 512 * 1024 * 1024,
+    contracts: dict[str, ABI] = STD_CONTRACT_ABIS,
     action_whitelist: dict[str, list[str]] = {},
     delta_whitelist: dict[str, list[str]] = {}
 ):
@@ -165,23 +170,22 @@ async def open_state_history(
         )
         await ws.send_message(get_blocks_msg)
 
-        contracts = STD_CONTRACT_ABIS
-
         # receive blocks & manage acks
         acked_block = max_messages_in_flight + 1
         block_num = start_block_num - 1
         while block_num != end_block_num:
             # receive get_blocks_result
             blocks_bytes = await ws.get_message()
-            block_num, block, deltas, actions = decode_block_result(
+            block = decode_block_result(
                 blocks_bytes, contracts,
                 delta_whitelist=delta_whitelist,
                 action_whitelist=action_whitelist
             )
+            block_num = block.block_num
 
-            deltas_num = len(deltas)
-            actions_num = len(actions)
-            print(f'[{block_num}]: deltas: {deltas_num}, actions: {actions_num}')
+            deltas_num = len(block.deltas)
+            actions_num = len(block.actions)
+            # print(f'[{block_num}]: deltas: {deltas_num}, actions: {actions_num}')
 
             yield block
 
