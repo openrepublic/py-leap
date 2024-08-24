@@ -2,41 +2,38 @@
 
 from typing import OrderedDict
 
-import msgspec
-
 from trio_websocket import open_websocket_url
 
-from .protocol.ds import DataStream
-from .protocol.abi import ABI, ABIDataStream
+from leap.errors import SerializationException
+
+from .protocol.abi import ABI, STD_CONTRACT_ABIS, abi_pack, abi_unpack
 
 
-def encode_get_status_request() -> bytes:
-    ds = DataStream()
-    ds.pack_uint8(0)
-    return bytes(ds.getvalue())
-
-def encode_ack(num_msgs: int) -> bytes:
-    ds = DataStream()
-    ds.pack_uint8(2)
-    ds.pack_uint32(num_msgs)
-    return bytes(ds.getvalue())
-
-
-def decode_block_result(blocks_bytes: bytes) -> tuple[int, OrderedDict]:
-    ds = ABIDataStream(blocks_bytes)
-    result: OrderedDict = ds.unpack_type('result')
+def decode_block_result(
+    blocks_bytes: bytes,
+    contracts: dict[str, ABI],
+    delta_whitelist: dict[str, list[str]] = {},
+    action_whitelist: dict[str, list[str]] = {}
+) -> tuple[
+    int,
+    OrderedDict,
+    list,
+    list
+]:
+    result = abi_unpack('result', blocks_bytes)
 
     block_num = result['this_block']['block_num']
 
+    decoded_deltas = []
+    decoded_actions = []
+
     try:
         if result['block']:
-            ds = ABIDataStream(result['block'])
-            block: OrderedDict = ds.unpack_type('signed_block')
+            block = abi_unpack('signed_block', result['block'])
             result['block'] = block
 
         if result['deltas']:
-            ds = ABIDataStream(result['deltas'])
-            deltas: list[OrderedDict] = ds.unpack_type('table_delta[]')
+            deltas = abi_unpack('table_delta[]', result['deltas'])
 
             for delta in deltas:
                 rows = delta['rows']
@@ -44,32 +41,81 @@ def decode_block_result(blocks_bytes: bytes) -> tuple[int, OrderedDict]:
                     case 'account':
                         for row in rows:
                             if row['present']:
-                                ds = ABIDataStream(row['data'])
-                                account_delta = ds.unpack_type('account')
+                                account_delta = abi_unpack('account', row['data'])
                                 abi_raw = account_delta['abi']
                                 if len(abi_raw) > 0:
-                                    ds = ABIDataStream(abi_raw)
-                                    new_abi = msgspec.convert(
-                                        ds.unpack_type('abi'), type=ABI)
+                                    contracts[account_delta['name']] = abi_unpack(
+                                        'abi', abi_raw, spec=ABI)
 
                         break
 
                     case 'contract_row':
+                        if len(delta_whitelist) == 0:
+                            continue
+
                         for row in rows:
-                            ds = ABIDataStream(row['data'])
-                            contract_delta = ds.unpack_type('contract_row')
-                            print(contract_delta)
+                            contract_delta = abi_unpack('contract_row', row['data'])
+                            table = contract_delta['table']
+                            code = contract_delta['code']
+
+                            relevant_tables = delta_whitelist.get(code, [])
+                            if table not in relevant_tables:
+                                continue
+
+                            contract_abi = contracts.get(code, None)
+                            if not contract_abi:
+                                raise SerializationException(f'abi for contract {code} not found')
+
+                            try:
+                                decoded_deltas.append(
+                                    abi_unpack(
+                                        table,
+                                        contract_delta['value'],
+                                        abi=contract_abi
+                                    )
+                                )
+
+                            except Exception as e:
+                                e.add_note(f'while decoding table delta {code}::{contract_delta["table"]}')
+                                raise e
+
                         break
 
-        if result['traces']:
-            ds = ABIDataStream(result['traces'])
-            traces: list[OrderedDict] = ds.unpack_type('transaction_trace[]')
+        if result['traces'] and not len(action_whitelist) == 0:
+            tx_traces = abi_unpack(
+                'transaction_trace[]', result['traces'])
+
+            for tx_trace in tx_traces:
+                for act_trace in tx_trace['action_traces']:
+                    action = act_trace['act']
+                    account = action['account']
+                    name = action['name']
+
+                    if account == 'eosio' and name == 'onblock':
+                        continue
+
+                    try:
+                        relevant_actions = action_whitelist.get(account, [])
+                        if name not in relevant_actions:
+                            continue
+
+                        contract_abi = contracts.get(account, None)
+                        if not contract_abi:
+                            raise SerializationException(f'abi for contract {account} not found')
+
+                        act_data = abi_unpack(name, action['data'], abi=contract_abi)
+                        action['data'] = act_data
+                        decoded_actions.append(action)
+
+                    except Exception as e:
+                        e.add_note(f'while decoding action trace {account}::{name}')
+                        raise e
 
     except Exception as e:
         e.add_note(f'while decoding block {block_num}')
         raise e
 
-    return block_num, result
+    return block_num, result, decoded_deltas, decoded_actions
 
 
 # generator, yields blocks
@@ -82,7 +128,9 @@ async def open_state_history(
     fetch_block: bool = True,
     fetch_traces: bool = True,
     fetch_deltas: bool = True,
-    max_message_size: int = 512 * 1024 * 1024
+    max_message_size: int = 512 * 1024 * 1024,
+    action_whitelist: dict[str, list[str]] = {},
+    delta_whitelist: dict[str, list[str]] = {}
 ):
     async with open_websocket_url(
         endpoint,
@@ -93,15 +141,13 @@ async def open_state_history(
         _  = await ws.get_message()
 
         # send get_status_request
-        await ws.send_message(encode_get_status_request())
+        await ws.send_message(abi_pack('request', ('get_status_request_v0', {})))
 
         # receive get_status_result
-        ds = ABIDataStream((await ws.get_message()))
-        _ = ds.unpack_type('result')
+        _ = abi_unpack('result', (await ws.get_message()))
 
         # send get_blocks_request
-        ds = ABIDataStream()
-        ds.pack_type(
+        get_blocks_msg = abi_pack(
             'request',
             (
                 'get_blocks_request_v0',
@@ -117,7 +163,9 @@ async def open_state_history(
                 }
             )
         )
-        await ws.send_message(ds.getvalue())
+        await ws.send_message(get_blocks_msg)
+
+        contracts = STD_CONTRACT_ABIS
 
         # receive blocks & manage acks
         acked_block = max_messages_in_flight + 1
@@ -125,12 +173,23 @@ async def open_state_history(
         while block_num != end_block_num:
             # receive get_blocks_result
             blocks_bytes = await ws.get_message()
-            block_num, block = decode_block_result(blocks_bytes)
+            block_num, block, deltas, actions = decode_block_result(
+                blocks_bytes, contracts,
+                delta_whitelist=delta_whitelist,
+                action_whitelist=action_whitelist
+            )
+
+            deltas_num = len(deltas)
+            actions_num = len(actions)
+            print(f'[{block_num}]: deltas: {deltas_num}, actions: {actions_num}')
 
             yield block
 
             if acked_block == block_num:
                 # ack next batch of messages
                 await ws.send_message(
-                    encode_ack(max_messages_in_flight))
+                    abi_pack(
+                        'request', (
+                            'get_blocks_ack_request_v0', {'num_messages': max_messages_in_flight})))
+
                 acked_block += max_messages_in_flight

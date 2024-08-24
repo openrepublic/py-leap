@@ -199,22 +199,22 @@ class DataStream():
         return struct.unpack("<Q", self.read(8))[0]
 
     def pack_int128(self, v):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def unpack_int128(self):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def pack_uint128(self, v):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def unpack_uint128(self):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def pack_varint32(self, v):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def unpack_varint32(self):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def pack_varuint32(self, v):
         val = v
@@ -239,28 +239,28 @@ class DataStream():
         return v
 
     def pack_float32(self, v):
-        raise Exception("not implementd")
+        self.write(struct.pack("<f", v))
 
     def unpack_float32(self):
-        raise Exception("not implementd")
+        return struct.unpack("<f", self.read(4))[0]
 
     def pack_float64(self, v):
-        raise Exception("not implementd")
+        self.write(struct.pack("<d", v))
 
     def unpack_float64(self):
-        raise Exception("not implementd")
+        return struct.unpack("<d", self.read(8))[0]
 
     def pack_float128(self, v):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def unpack_float128(self):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def pack_time_point(self, v):
-        raise Exception("not implementd")
+        self.pack_uint64(v)
 
-    def unpack_time_point(self):
-        raise Exception("not implementd")
+    def unpack_time_point(self) -> int:
+        return self.unpack_uint64()
 
     def pack_time_point_sec(self, v):
         t = int(calendar.timegm(datetime.strptime(v, '%Y-%m-%dT%H:%M:%S').timetuple()))
@@ -321,10 +321,10 @@ class DataStream():
         return self.unpack_sha256()
 
     def pack_checksum512(self, v):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def unpack_checksum512(self):
-        raise Exception("not implementd")
+        raise Exception("not implemented")
 
     def pack_public_key(self, v):
         if v.startswith("EOS"):
@@ -334,7 +334,7 @@ class DataStream():
             self.pack_uint8(0)
             self.write(data[:-4])
         elif v.startswith("PUB_R1_"):
-            raise Exception("not implementd")
+            raise Exception("not implemented")
         else:
             raise Exception("invalid pubkey format")
 
@@ -345,7 +345,7 @@ class DataStream():
             data = data + ripmed160(data)[:4]
             return "EOS" + b58encode(data).decode('ascii')
         elif t == 1:
-            raise Exception("not implementd")
+            raise Exception("not implemented")
         else:
             raise Exception("invalid binary pubkey")
 
@@ -372,7 +372,7 @@ class DataStream():
             data = data + ripmed160(data + b"K1")[:4]
             return "SIG_K1_" + b58encode(data).decode("ascii")
         elif t == 1:
-            raise Exception("not implementd")
+            raise Exception("not implemented")
         else:
             raise Exception("invalid binary signature")
 

@@ -11,11 +11,11 @@ async def test_ship():
     stream = open_state_history(
         'ws://127.0.0.1:18999',
         2,
-        end_block_num=60
+        end_block_num=60,
+        action_whitelist={'eosio.token': ['transfer']},
+        delta_whitelist={}
     )
 
     async with aclosing(stream):
         async for block in stream:
             block_num = block['this_block']['block_num']
-            print(block_num)
-

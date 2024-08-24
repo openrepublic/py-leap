@@ -61,13 +61,32 @@ class ABI(msgspec.Struct):
 
 
 package_dir = os.path.dirname(__file__)
-abi_file_path = os.path.join(package_dir, 'std_abi.json')
+
+std_abi_file_path = os.path.join(package_dir, 'abis/std_abi.json')
+eosio_abi_file_path = os.path.join(package_dir, 'abis/eosio.json')
+eosio_token_abi_file_path = os.path.join(package_dir, 'abis/eosio.token.json')
+
 
 def load_std_abi() -> ABI:
-    with open(abi_file_path, 'r') as file:
+    with open(std_abi_file_path, 'r') as file:
         return msgspec.json.decode(file.read(), type=ABI)
 
+
+def load_std_contracts() -> dict[str, ABI]:
+    contracts = {}
+
+    with open(eosio_abi_file_path, 'r') as file:
+        contracts['eosio'] = msgspec.json.decode(file.read(), type=ABI)
+
+    with open(eosio_token_abi_file_path, 'r') as file:
+        contracts['eosio.token'] = msgspec.json.decode(file.read(), type=ABI)
+
+    return contracts
+
+
 STD_ABI = load_std_abi()
+
+STD_CONTRACT_ABIS = load_std_contracts()
 
 
 def has_array_type_mod(type_name: str) -> bool:
@@ -89,7 +108,7 @@ def has_type_modifiers(type_name: str) -> bool:
             has_extension_type_mod(type_name))
 
 
-class TypeDescriptor:
+class ABITypeDescriptor:
 
     def __init__(
         self,
@@ -148,7 +167,17 @@ class ABIDataStream(DataStream):
 
         return variant
 
-    def resolve_type(self, name: str) -> TypeDescriptor:
+    def resolve_table(self, name: str) -> ABITable:
+        table = next(
+            (t for t in self.abi.tables if t.name == name),
+            None
+        )
+        if not table:
+            raise ValueError(f'table {name} not found in ABI')
+
+        return table
+
+    def resolve_type(self, name: str) -> ABITypeDescriptor:
         sname = strip_type_mods(name)
         sname = self.resolve_alias(sname)
         struct = None
@@ -159,9 +188,14 @@ class ABIDataStream(DataStream):
                 variant = self.resolve_variant(sname)
 
             except ValueError:
-                struct = self.resolve_struct(sname)
+                try:
+                    struct = self.resolve_struct(sname)
 
-        return TypeDescriptor(name, sname, struct, variant)
+                except ValueError:
+                    table = self.resolve_table(sname)
+                    struct = self.resolve_struct(table.type)
+
+        return ABITypeDescriptor(name, sname, struct, variant)
 
     def pack_struct(self, struct_def: ABIStruct, v):
         for field in struct_def.fields:
@@ -262,3 +296,23 @@ class ABIDataStream(DataStream):
         except Exception as e:
             e.add_note(f'trying to unpack {type_name}')
             raise e
+
+
+def abi_pack(type_name: str, value, abi: ABI = STD_ABI) -> bytes:
+    ds = ABIDataStream(abi=abi)
+    ds.pack_type(type_name, value)
+    return ds.getvalue()
+
+
+def abi_unpack(
+    type_name: str,
+    raw: bytes,
+    abi: ABI = STD_ABI,
+    spec: msgspec.Struct | None = None
+) -> OrderedDict:
+    ds = ABIDataStream(raw, abi=abi)
+    result = ds.unpack_type(type_name)
+    if spec:
+        result = msgspec.convert(result, type=spec)
+
+    return result
