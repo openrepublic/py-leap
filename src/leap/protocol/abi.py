@@ -278,7 +278,13 @@ class ABIDataStream(DataStream):
 
         if desc.variant:
             i = self.unpack_uint8()
-            desc.struct = self.resolve_struct(desc.variant.types[i])
+            sub_name = self.resolve_alias(desc.variant.types[i])
+
+            if sub_name not in STANDARD_TYPES:
+                desc.struct = self.resolve_struct(sub_name)
+
+            else:
+                desc.strip_name = sub_name
 
         # find right unpacking function
         unpack_partial = None

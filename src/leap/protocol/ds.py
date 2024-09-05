@@ -372,7 +372,9 @@ class DataStream():
             data = data + ripmed160(data + b"K1")[:4]
             return "SIG_K1_" + b58encode(data).decode("ascii")
         elif t == 1:
-            raise Exception("not implemented")
+            data = self.read(65)
+            data = data + ripmed160(data + b"R1")[:4]
+            return "SIG_R1_" + b58encode(data).decode("ascii")
         else:
             raise Exception("invalid binary signature")
 

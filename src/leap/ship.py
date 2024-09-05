@@ -31,6 +31,68 @@ def decode_block_result(
     decoded_deltas = []
     decoded_actions = []
 
+    def maybe_decode_account_row(row):
+        if not row['present']:
+            return
+
+        account_delta = abi_unpack('account', row['data'])
+        abi_raw = account_delta['abi']
+        if len(abi_raw) > 0:
+            contracts[account_delta['name']] = abi_unpack(
+                'abi', abi_raw, spec=ABI)
+
+    def maybe_decode_contract_row(row):
+        contract_delta = abi_unpack('contract_row', row['data'])
+        table = contract_delta['table']
+        code = contract_delta['code']
+
+        relevant_tables = delta_whitelist.get(code, [])
+        if table not in relevant_tables:
+            return
+
+        contract_abi = contracts.get(code, None)
+        if not contract_abi:
+            raise SerializationException(f'abi for contract {code} not found')
+
+        try:
+            decoded_deltas.append(
+                abi_unpack(
+                    table,
+                    contract_delta['value'],
+                    abi=contract_abi
+                )
+            )
+
+        except Exception as e:
+            e.add_note(f'while decoding table delta {code}::{contract_delta["table"]}')
+            raise e
+
+    def maybe_decode_tx_trace(tx_trace):
+        for act_trace in tx_trace['action_traces']:
+            action = act_trace['act']
+            account = action['account']
+            name = action['name']
+
+            if account == 'eosio' and name == 'onblock':
+                continue
+
+            try:
+                relevant_actions = action_whitelist.get(account, [])
+                if name not in relevant_actions:
+                    continue
+
+                contract_abi = contracts.get(account, None)
+                if not contract_abi:
+                    raise SerializationException(f'abi for contract {account} not found')
+
+                act_data = abi_unpack(name, action['data'], abi=contract_abi)
+                action['data'] = act_data
+                decoded_actions.append(action)
+
+            except Exception as e:
+                e.add_note(f'while decoding action trace {account}::{name}')
+                raise e
+
     try:
         if result['block']:
             block = abi_unpack('signed_block', result['block'])
@@ -43,77 +105,21 @@ def decode_block_result(
                 rows = delta['rows']
                 match delta['name']:
                     case 'account':
-                        for row in rows:
-                            if row['present']:
-                                account_delta = abi_unpack('account', row['data'])
-                                abi_raw = account_delta['abi']
-                                if len(abi_raw) > 0:
-                                    contracts[account_delta['name']] = abi_unpack(
-                                        'abi', abi_raw, spec=ABI)
-
+                        [maybe_decode_account_row(row) for row in rows]
                         break
 
                     case 'contract_row':
                         if len(delta_whitelist) == 0:
                             continue
 
-                        for row in rows:
-                            contract_delta = abi_unpack('contract_row', row['data'])
-                            table = contract_delta['table']
-                            code = contract_delta['code']
-
-                            relevant_tables = delta_whitelist.get(code, [])
-                            if table not in relevant_tables:
-                                continue
-
-                            contract_abi = contracts.get(code, None)
-                            if not contract_abi:
-                                raise SerializationException(f'abi for contract {code} not found')
-
-                            try:
-                                decoded_deltas.append(
-                                    abi_unpack(
-                                        table,
-                                        contract_delta['value'],
-                                        abi=contract_abi
-                                    )
-                                )
-
-                            except Exception as e:
-                                e.add_note(f'while decoding table delta {code}::{contract_delta["table"]}')
-                                raise e
-
+                        [maybe_decode_contract_row(row) for row in rows]
                         break
 
         if result['traces'] and not len(action_whitelist) == 0:
             tx_traces = abi_unpack(
                 'transaction_trace[]', result['traces'])
 
-            for tx_trace in tx_traces:
-                for act_trace in tx_trace['action_traces']:
-                    action = act_trace['act']
-                    account = action['account']
-                    name = action['name']
-
-                    if account == 'eosio' and name == 'onblock':
-                        continue
-
-                    try:
-                        relevant_actions = action_whitelist.get(account, [])
-                        if name not in relevant_actions:
-                            continue
-
-                        contract_abi = contracts.get(account, None)
-                        if not contract_abi:
-                            raise SerializationException(f'abi for contract {account} not found')
-
-                        act_data = abi_unpack(name, action['data'], abi=contract_abi)
-                        action['data'] = act_data
-                        decoded_actions.append(action)
-
-                    except Exception as e:
-                        e.add_note(f'while decoding action trace {account}::{name}')
-                        raise e
+            [maybe_decode_tx_trace(tx_trace) for tx_trace in tx_traces]
 
     except Exception as e:
         e.add_note(f'while decoding block {block_num}')
@@ -171,7 +177,7 @@ async def open_state_history(
         await ws.send_message(get_blocks_msg)
 
         # receive blocks & manage acks
-        acked_block = max_messages_in_flight + 1
+        acked_block = start_block_num
         block_num = start_block_num - 1
         while block_num != end_block_num:
             # receive get_blocks_result
@@ -183,8 +189,8 @@ async def open_state_history(
             )
             block_num = block.block_num
 
-            deltas_num = len(block.deltas)
-            actions_num = len(block.actions)
+            # deltas_num = len(block.deltas)
+            # actions_num = len(block.actions)
             # print(f'[{block_num}]: deltas: {deltas_num}, actions: {actions_num}')
 
             yield block
