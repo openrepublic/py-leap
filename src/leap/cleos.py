@@ -683,6 +683,13 @@ class CLEOS:
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
             abi_file.write(json_module.dumps(abi))
 
+    def set_blockchain_parameters(self, params: dict):
+        return self.push_action(
+            'eosio',
+            'setparams',
+            [params],
+            'eosio'
+        )
 
     def boot_sequence(
         self,
@@ -1561,7 +1568,8 @@ class CLEOS:
             'eosio',
             'deposit',
             [owner, quantity],
-            owner
+            owner,
+            key=self.private_keys[owner]
         )
 
     def rex_buy(
@@ -1600,19 +1608,24 @@ class CLEOS:
     def register_producer(
         self,
         producer: str,
+        key: str | None = None,
         url: str = '',
         location: int = 0
     ):
+        if not key:
+            key = self.keys[producer]
+
         return self.push_action(
             'eosio',
             'regproducer',
             [
                 producer,
-                self.keys[producer],
+                key,
                 url,
                 location
             ],
-            producer
+            producer,
+            key=self.private_keys[producer]
         )
 
     def vote_producers(
@@ -1625,7 +1638,8 @@ class CLEOS:
             'eosio',
             'voteproducer',
             [voter, proxy, producers],
-            voter
+            voter,
+            key=self.private_keys[voter]
         )
 
     def claim_rewards(

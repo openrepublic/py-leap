@@ -695,6 +695,25 @@ class DataStream():
     def unpack_tstamp(self):
         self.unpack_uint64()
 
+    def pack_blockchain_parameters(self, v):
+        self.pack_uint64(v["max_block_net_usage"])
+        self.pack_uint32(v["target_block_net_usage_pct"])
+        self.pack_uint32(v["max_transaction_net_usage"])
+        self.pack_uint32(v["base_per_transaction_net_usage"])
+        self.pack_uint32(v["net_usage_leeway"])
+        self.pack_uint32(v["context_free_discount_net_usage_num"])
+        self.pack_uint32(v["context_free_discount_net_usage_den"])
+        self.pack_uint32(v["max_block_cpu_usage"])
+        self.pack_uint32(v["target_block_cpu_usage_pct"])
+        self.pack_uint32(v["max_transaction_cpu_usage"])
+        self.pack_uint32(v["min_transaction_cpu_usage"])
+        self.pack_uint32(v["max_transaction_lifetime"])
+        self.pack_uint32(v["deferred_trx_expiration_window"])
+        self.pack_uint32(v["max_transaction_delay"])
+        self.pack_uint32(v["max_inline_action_size"])
+        self.pack_uint16(v["max_inline_action_depth"])
+        self.pack_uint16(v["max_authority_depth"])
+
     def pack_handshake_message(self, v):
         self.pack_uint16(v.network_version)
         self.pack_chain_id_type(v.chain_id)
