@@ -1,6 +1,6 @@
 [tool.poetry]
 name = 'py-leap'
-version = '0.1a26'
+version = '0.1a27'
 packages = [{include = 'leap', from='src'}]
 description = ''
 authors = ['Guillermo Rodriguez <guillermo@telos.net>']

@@ -1161,7 +1161,7 @@ class CLEOS:
             rows.extend(resp['rows'])
             done = not resp['more']
             if not done:
-                params['index_position'] = resp['next_key']
+                params['lower_bound'] = resp['next_key']
 
         return rows
 
@@ -1193,7 +1193,7 @@ class CLEOS:
             rows.extend(resp['rows'])
             done = not resp['more']
             if not done:
-                params['index_position'] = resp['next_key']
+                params['lower_bound'] = resp['next_key']
 
         return rows
 

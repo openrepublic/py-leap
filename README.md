@@ -15,11 +15,11 @@ Requirements:
 
 ```
 
-git clone https://github.com/guilledk/py-leap.git -b v0.1a17
+git clone https://github.com/guilledk/py-leap.git -b v0.1a27
 
 cd py-leap
 
-poetry install --with=dev
+poetry install --with=dev --with=snaps
 
 poetry shell
 
