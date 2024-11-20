@@ -1,6 +1,6 @@
 [tool.poetry]
 name = 'py-leap'
-version = '0.1a27'
+version = '0.1a28'
 packages = [{include = 'leap', from='src'}]
 description = ''
 authors = ['Guillermo Rodriguez <guillermo@telos.net>']
@@ -12,6 +12,7 @@ asks = '^3.0.0'
 base58 = '^2.1.1'
 cryptos = '^2.0.9'
 requests = '<2.32.0'
+ripemd-hash = "^1.0.1"
 
 [tool.poetry.group.docs]
 optional = true

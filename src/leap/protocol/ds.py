@@ -15,11 +15,8 @@ from collections import OrderedDict
 
 from ..errors import SerializationException
 
-
-def ripmed160(data):
-    h = hashlib.new('ripemd160')
-    h.update(data)
-    return h.digest()
+# dont use hashlib due to reliance in openssl and deprecation of ripemd160 on it
+from ripemd.ripemd160 import ripemd160
 
 
 def char_to_symbol(c):
@@ -433,7 +430,7 @@ class DataStream():
         if v.startswith("EOS"):
             data = b58decode(str(v[3:]))
             if len(data) != 33 + 4: raise Exception("invalid k1 key")
-            if ripmed160(data[:-4])[:4] != data[-4:]: raise Exception("checksum failed")
+            if ripemd160(data[:-4])[:4] != data[-4:]: raise Exception("checksum failed")
             self.pack_uint8(0)
             self.write(data[:-4])
         elif v.startswith("PUB_R1_"):
@@ -445,7 +442,7 @@ class DataStream():
         t = self.unpack_uint8()
         if t == 0:
             data = self.read(33)
-            data = data + ripmed160(data)[:4]
+            data = data + ripemd160(data)[:4]
             return "EOS" + b58encode(data).decode('ascii')
         elif t == 1:
             raise Exception("not implementd")
@@ -457,7 +454,7 @@ class DataStream():
         def pack_signature_sufix(b58sig, sufix):
             data = b58decode(b58sig)
             if len(data) != 65 + 4: raise Exception("invalid {0} signature".format(sufix))
-            if ripmed160(data[:-4] + sufix)[:4] != data[-4:]: raise Exception("checksum failed")
+            if ripemd160(data[:-4] + sufix)[:4] != data[-4:]: raise Exception("checksum failed")
             self.pack_uint8(0)
             self.write(data[:-4])
 
@@ -472,7 +469,7 @@ class DataStream():
         t = self.unpack_uint8()
         if t == 0:
             data = self.read(65)
-            data = data + ripmed160(data + b"K1")[:4]
+            data = data + ripemd160(data + b"K1")[:4]
             return "SIG_K1_" + b58encode(data).decode("ascii")
         elif t == 1:
             raise Exception("not implementd")
@@ -1012,22 +1009,17 @@ def sign_tx(chain_id, tx, pk):
 
     return tx_id, tx
 
-def ripmed160(data):
-    h = hashlib.new('ripemd160')
-    h.update(data)
-    return h.digest()
-
 def gen_key_pair():
     pk   = random_key()
     wif  = encode_privkey(pk, 'wif')
     data = encode_pubkey(privtopub(pk),'bin_compressed')
-    data = data + ripmed160(data)[:4]
+    data = data + ripemd160(data)[:4]
     pubkey = "EOS" + b58encode(data).decode('utf8')
     return wif, pubkey
 
 def get_pub_key(pk):
     data = encode_pubkey(privtopub(pk),'bin_compressed')
-    data = data + ripmed160(data)[:4]
+    data = data + ripemd160(data)[:4]
     pubkey = "EOS" + b58encode(data).decode('utf8')
     return pubkey
 
