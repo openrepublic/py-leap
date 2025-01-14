@@ -1186,8 +1186,8 @@ class CLEOS:
         }
 
         while not done:
-            resp = await (self._post(
-                '/v1/chain/get_table_rows', is_async=True, json=params))
+            resp = await (self._async_post(
+                '/v1/chain/get_table_rows', json=params))
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
             rows.extend(resp['rows'])
@@ -1229,7 +1229,7 @@ class CLEOS:
         :return: A dictionary with blockchain information.
         :rtype: dict[str, str | int]
         '''
-        return await self._aget('/v1/chain/get_info')
+        return await self._async_get('/v1/chain/get_info')
 
     def get_resources(self, account: str) -> list[dict]:
         '''Get account resources.
