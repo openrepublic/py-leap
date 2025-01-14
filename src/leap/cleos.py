@@ -195,8 +195,8 @@ class CLEOS:
         res = {}
         for i in range(1, retries + 1):
             try:
-                return await self._apost(
-                    '/v1/chain/push_transaction', is_async=True, json=tx)
+                return await self._async_post(
+                    '/v1/chain/push_transaction', json=tx)
 
             except ChainAPIError as err:
                 if i == retries:  # that was last retry, raise
