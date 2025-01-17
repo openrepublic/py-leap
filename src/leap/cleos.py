@@ -248,7 +248,7 @@ class CLEOS:
         chain_id: str = chain_info['chain_id']
         abis: dict[str, dict] = self._get_abis_for_actions(actions)
 
-        return create_and_sign_tx(chain_id, abis, actions, key, **kwargs)
+        return create_and_sign_tx(chain_id, abis, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
 
     async def _a_create_signed_tx(
         self,
@@ -263,7 +263,7 @@ class CLEOS:
         chain_id: str = chain_info['chain_id']
         abis: dict[str, dict] = self._get_abis_for_actions(actions)
 
-        return create_and_sign_tx(chain_id, abis, actions, key, **kwargs)
+        return create_and_sign_tx(chain_id, abis, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
 
     def push_actions(
         self,

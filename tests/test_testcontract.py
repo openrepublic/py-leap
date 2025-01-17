@@ -7,7 +7,7 @@ from leap.tokens import tlos_token
 from leap.errors import TransactionPushError
 
 
-def test_asset(cleos_w_testcontract):
+async def test_asset(cleos_w_testcontract):
     cleos = cleos_w_testcontract
     cleos.push_action(
         'testcontract',
@@ -42,6 +42,15 @@ def test_asset(cleos_w_testcontract):
         )
 
     assert 'assertion failure with message: magnitude of asset amount must be less than 2^62' in str(err)
+
+    cleos.wait_blocks(2)
+
+    await cleos.a_push_action(
+        'testcontract',
+        'checkasset',
+        ['1000.0000 TLOS', 1000 * (10 ** 4)],
+        'testcontract'
+    )
 
 
 def test_ripmd160(cleos_w_testcontract):
