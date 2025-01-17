@@ -163,8 +163,6 @@ def download_latest_snapshot(
 import os
 import logging
 
-from zstandard import ZstdDecompressor
-
 
 def download_with_progress_bar(url: str, file_path: Path) -> None:
     try:
@@ -210,6 +208,7 @@ def download_snapshot(
     import requests
 
     from urllib.request import ProxyHandler, urlretrieve, build_opener, install_opener
+    from zstandard import ZstdDecompressor
 
     target_path = Path(target_path)
 

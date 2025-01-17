@@ -16,7 +16,7 @@ from urllib3.util.retry import Retry
 
 from datetime import datetime, timedelta
 
-import asks
+import httpx
 
 from requests.adapters import HTTPAdapter
 
@@ -73,7 +73,7 @@ class CLEOS:
         self._session.mount('http://', adapter)
         self._session.mount('https://', adapter)
 
-        self._asession = asks.Session(connections=200)
+        self._asession = httpx.AsyncClient()
 
     # local abi store methods
 
@@ -117,7 +117,6 @@ class CLEOS:
         route: str,
         *args,
         base_route: str | None = None,
-        is_async: bool = False,
         params: dict | None = None,
         json: dict | None = None,
         data: str | None = None,
@@ -142,24 +141,55 @@ class CLEOS:
 
         kwargs['data'] = _data
 
-        session = self._asession if is_async else self._session
-        return getattr(session, method)(base_route + route, *args, headers=headers, **kwargs)
+        return getattr(self._session, method)(base_route + route, *args, headers=headers, **kwargs)
 
     def _get(self, *args, **kwargs):
         return self._unwrap_response(
-            self._session_method('get', *args, is_async=False, **kwargs))
+            self._session_method('get', *args, **kwargs))
 
     def _post(self, *args, **kwargs):
         return self._unwrap_response(
-            self._session_method('post', *args, is_async=False, **kwargs))
+            self._session_method('post', *args, **kwargs))
+
+    async def _async_session_method(
+        self,
+        method: str,
+        route: str,
+        *args,
+        base_route: str | None = None,
+        params: dict | None = None,
+        json: dict | None = None,
+        data: str | None = None,
+        headers: dict[str, str] = {
+            'accept': 'application/json',
+            'Content-Type': 'application/json'
+        },
+        **kwargs
+    ):
+        if not isinstance(base_route, str):
+            base_route = self.endpoint
+
+        _data = '{}'
+        if isinstance(data, str):
+            _data = data
+        elif isinstance(json, dict):
+            _data = json_module.dumps(json)
+        elif isinstance(params, dict):
+            _data = json_module.dumps(params)
+
+        kwargs['content'] = _data
+        url = base_route + route
+
+        resp = await self._asession.request(method, url, headers=headers, **kwargs)
+        return resp
 
     async def _async_get(self, *args, **kwargs):
-        return self._unwrap_response(
-            await self._session_method('get', *args, is_async=True, **kwargs))
+        response = await self._async_session_method('get', *args, **kwargs)
+        return self._unwrap_response(response)
 
     async def _async_post(self, *args, **kwargs):
-        return self._unwrap_response(
-            await self._session_method('post', *args, is_async=True, **kwargs))
+        response = await self._async_session_method('post', *args, **kwargs)
+        return self._unwrap_response(response)
 
     # tx send machinery
 
