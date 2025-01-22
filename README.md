@@ -11,18 +11,21 @@ Requirements:
 
 - `git`
 - `python` >=3.9
-- `poetry` -> https://python-poetry.org/
+- `uv` -> https://docs.astral.sh/uv/
 
 ```
 
-git clone https://github.com/guilledk/py-leap.git -b v0.1a27
+git clone https://github.com/guilledk/py-leap.git
 
 cd py-leap
 
-poetry install --with=dev --with=snaps
+# setup env
+uv venv --python 3.12
 
-poetry shell
+# install deps
+uv sync
 
-pytest tests/test_libre_dex.py
+# run test
+uv run pytest tests/test_libre_dex.py
 
 ```
