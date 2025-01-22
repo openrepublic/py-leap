@@ -44,3 +44,18 @@ def cleos_w_eosmechs(request, tmp_path_factory):
 
     with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
         yield cleos
+
+
+@pytest.fixture(scope='module')
+def cleos_w_indextest(request, tmp_path_factory):
+    deploy_marker = pytest.mark.contracts(
+        cindextest='tests/contracts/cindextest',
+        rindextest='tests/contracts/rindextest')
+
+    random_marker = pytest.mark.randomize(False)
+
+    request.applymarker(random_marker)
+    request.applymarker(deploy_marker)
+
+    with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
+        yield cleos

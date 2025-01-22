@@ -47,6 +47,9 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     bootstrap: bool = maybe_get_marker(
         request, 'bootstrap', 'args', [False])[0]
 
+    randomize: bool = maybe_get_marker(
+        request, 'randomize', 'args', [True])[0]
+
     contracts = maybe_get_marker(
         request, 'contracts', 'kwargs', {})
 
@@ -69,11 +72,15 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     ]:
         cmd += ['--plugin', f'eosio::{plugin}']
 
-    http_port = get_free_port()
+    http_port = get_free_port() if randomize else 8888
     cmd += ['--http-server-address', '0.0.0.0:8888']
     cmd += ['--http-validate-host', '0']
 
-    priv, pub = gen_key_pair()
+    if randomize:
+        priv, pub = gen_key_pair()
+    else:
+        priv, pub = ('5KU4gWTqUWHHh2EhjcK73eYF4T8cWytNkv38qtg4tXtF8iphTZy', 'EOS6FQkekshKwynMNxQLJjXFFLLekiDNYXXK2bAukVVrkhqdkusoj')
+
     cmd += ['--signature-provider', f'{pub}=KEY:{priv}']
 
     genesis_info = json.dumps({
