@@ -22,7 +22,7 @@ from .sugar import (
 
 
 DEFAULT_NODEOS_REPO = 'guilledk/py-leap'
-DEFAULT_NODEOS_IMAGE = 'leap-4.0.4'
+DEFAULT_NODEOS_IMAGE = 'leap-5.0.3'
 
 
 def default_nodeos_image():
@@ -35,6 +35,91 @@ def maybe_get_marker(request, mark_name: str, field: str, default):
         return default
     else:
         return getattr(mark, field)
+
+
+@contextmanager
+def open_test_nodeos(request, tmp_path_factory):
+    tmp_path = tmp_path_factory.getbasetemp() / request.node.name
+    leap_path = tmp_path / 'leap'
+    leap_path.mkdir(parents=True, exist_ok=True)
+    leap_path = leap_path.resolve()
+
+    logging.info(f'created tmp path at {leap_path}')
+
+    dclient = docker.from_env()
+
+    container_img = default_nodeos_image() + '-bs'
+    logging.info(f'launching {container_img} container...')
+
+    http_port = get_free_port()
+    cmd = ['nodeos', '-e', '-p', 'eosio', '--config-dir', '/', '--data-dir', '/data']
+    cmd += [
+        '>>', '/root/nodeos.log', '2>&1'
+    ]
+
+    container_cmd = ['/bin/bash', '-c', ' '.join(cmd)]
+
+    vtestnet = get_container(
+        dclient,
+        container_img,
+        force_unique=True,
+        name=f'{tmp_path.name}-leap',
+        detach=True,
+        remove=True,
+        ports={'8888/tcp': http_port},
+        mounts=[Mount('/root', str(leap_path), 'bind')],
+        command=container_cmd
+    )
+    cleos = CLEOS(f'http://127.0.0.1:{http_port}', node_dir=leap_path)
+
+    # preload apis
+    rcleos = CLEOS('https://testnet.telos.net')
+    for account_name in ['eosio', 'eosio.token']:
+        abi = rcleos.get_abi(account_name)
+        cleos.load_abi(account_name, abi)
+
+    # load keys
+    ec, out = vtestnet.exec_run('cat /keys.json')
+    keys = json.loads(out.decode('utf-8'))
+
+    for account, keys in keys.items():
+        priv, _pub = keys
+        cleos.import_key(account, priv)
+
+    did_nodeos_launch = False
+
+    try:
+        cleos.import_key('eosio', '5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL')
+        cleos.wait_blocks(1)
+
+        did_nodeos_launch = True
+
+        yield cleos
+
+    finally:
+        if did_nodeos_launch:
+            logging.info(f'to see nodeos logs: \"less {leap_path}/nodeos.log\"')
+
+        else:
+            process = subprocess.run(
+                ['cat', str(leap_path / 'nodeos.log')],
+                text=True, capture_output=True
+            )
+            logging.error('seems nodeos didn\'t launch? showing logs...')
+            logging.error(process.stdout)
+
+        if vtestnet is not None:
+            try:
+                vtestnet.exec_run('pkill -f nodeos')
+                vtestnet.wait(timeout=120)
+                vtestnet.kill(signal='SIGTERM')
+                vtestnet.wait(timeout=20)
+
+            except docker.errors.NotFound:
+                ...
+
+            except docker.errors.APIError:
+                ...
 
 
 @contextmanager
@@ -60,7 +145,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     container_img = default_nodeos_image()
     logging.info(f'launching {container_img} container...')
 
-    cmd = ['nodeos', '-e', '-p', 'eosio', '--config-dir', '/root']
+    cmd = ['nodeos', '-e', '-p', 'eosio', '--config-dir', '/root', '--data-dir', '/root/data']
 
     for plugin in [
         'net_plugin',
@@ -79,7 +164,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     if randomize:
         priv, pub = gen_key_pair()
     else:
-        priv, pub = ('5KU4gWTqUWHHh2EhjcK73eYF4T8cWytNkv38qtg4tXtF8iphTZy', 'EOS6FQkekshKwynMNxQLJjXFFLLekiDNYXXK2bAukVVrkhqdkusoj')
+        priv, pub = ('5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL', 'EOS5GnobZ231eekYUJHGTcmy2qve1K23r5jSFQbMfwWTtPB7mFZ1L')
 
     cmd += ['--signature-provider', f'{pub}=KEY:{priv}']
 
@@ -141,7 +226,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     download_location.mkdir(exist_ok=True, parents=True)
 
 
-    cleos = CLEOS(f'http://127.0.0.1:{http_port}')
+    cleos = CLEOS(f'http://127.0.0.1:{http_port}', node_dir=leap_path)
     rcleos = CLEOS('https://testnet.telos.net')
 
     def maybe_download_contract(
@@ -197,25 +282,39 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
         yield cleos
 
     finally:
-        try:
-            if did_nodeos_launch:
-                logging.info(f'to see nodeos logs: \"less {leap_path}/nodeos.log\"')
+        if did_nodeos_launch:
+            logging.info(f'to see nodeos logs: \"less {leap_path}/nodeos.log\"')
 
-            else:
-                process = subprocess.run(
-                    ['cat', str(leap_path / 'nodeos.log')],
-                    text=True, capture_output=True
-                )
-                logging.error('seems nodeos didn\'t launch? showing logs...')
-                logging.error(process.stdout)
+        else:
+            process = subprocess.run(
+                ['cat', str(leap_path / 'nodeos.log')],
+                text=True, capture_output=True
+            )
+            logging.error('seems nodeos didn\'t launch? showing logs...')
+            logging.error(process.stdout)
 
-            vtestnet.kill()
+        vtestnet.exec_run('chmod 777 /root')
 
-        except docker.errors.NotFound:
-            ...
+        if vtestnet is not None:
+            try:
+                vtestnet.exec_run('pkill -f nodeos')
+                vtestnet.wait(timeout=120)
+                vtestnet.kill(signal='SIGTERM')
+                vtestnet.wait(timeout=20)
+
+            except docker.errors.NotFound:
+                ...
+
+            except docker.errors.APIError:
+                ...
 
 
-@pytest.fixture()
+@pytest.fixture(scope='module')
 def cleos(request, tmp_path_factory):
     with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
+        yield cleos
+
+@pytest.fixture(scope='module')
+def cleos_bs(request, tmp_path_factory):
+    with open_test_nodeos(request, tmp_path_factory) as cleos:
         yield cleos

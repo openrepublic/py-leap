@@ -12,14 +12,9 @@ def nodeless_cleos():
 
 
 @pytest.fixture(scope='module')
-def cleos(request, tmp_path_factory):
-    with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
-        yield cleos
-
-
-@pytest.fixture(scope='module')
 def cleos_w_bootstrap(request, tmp_path_factory):
     request.applymarker(pytest.mark.bootstrap(True))
+    request.applymarker(pytest.mark.randomize(False))
     with bootstrap_test_nodeos(request, tmp_path_factory) as cleos:
         yield cleos
 
