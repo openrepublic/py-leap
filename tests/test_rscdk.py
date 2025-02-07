@@ -10,7 +10,7 @@ def test_wait_start(cleos_w_indextest):
     print("eosio: ", cleos.private_keys['eosio'])
     print("cindextest: ", cleos.private_keys['cindextest'])
     print("rindextest: ", cleos.private_keys['rindextest'])
-    breakpoint()
+    # breakpoint()
 
 
 def test_load_storage_only(cleos_w_indextest):

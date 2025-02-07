@@ -44,6 +44,7 @@ class CLEOS:
     def __init__(
         self,
         endpoint: str = 'http://127.0.0.1:8888',
+        node_dir: Path | None = None,
         logger = None
     ):
         if logger is None:
@@ -52,6 +53,7 @@ class CLEOS:
             self.logger = logger
 
         self.endpoint = endpoint
+        self.node_dir = node_dir
 
         self.keys: dict[str, str] = {}
         self.private_keys: dict[str, str] = {}
