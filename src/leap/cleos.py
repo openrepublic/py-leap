@@ -17,11 +17,12 @@ import msgspec
 from msgspec import Struct
 from requests.adapters import HTTPAdapter
 
-from .sugar import random_leap_name
-from .errors import ChainHTTPError, ChainAPIError, ContractDeployError, TransactionPushError
-from .tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
-from .protocol import (
+from leap.sugar import random_leap_name
+from leap.errors import ChainHTTPError, ChainAPIError, ContractDeployError, TransactionPushError
+from leap.tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
+from leap.protocol import (
     Asset,
+    GetTableRowsResponse,
     get_tapos_info,
     create_and_sign_tx,
     gen_key_pair,
@@ -105,7 +106,10 @@ class CLEOS:
 
     def _unwrap_response(self, maybe_error: Any, resp_cls: Struct | None = None) -> dict:
         if resp_cls:
-            return msgspec.json.decode(maybe_error.text(), type=resp_cls)
+            return msgspec.json.decode(
+                maybe_error.text,
+                type=resp_cls
+            )
 
         if not hasattr(maybe_error, 'json'):
             return maybe_error
@@ -205,13 +209,23 @@ class CLEOS:
         resp = await self._asession.request(method, url, headers=headers, **kwargs)
         return resp
 
-    async def _async_get(self, *args, **kwargs):
+    async def _async_get(
+        self,
+        *args,
+        resp_cls: Struct | None = None,
+        **kwargs
+    ):
         response = await self._async_session_method('get', *args, **kwargs)
-        return self._unwrap_response(response)
+        return self._unwrap_response(response, resp_cls=resp_cls)
 
-    async def _async_post(self, *args, **kwargs):
+    async def _async_post(
+        self,
+        *args,
+        resp_cls: Struct | None = None,
+        **kwargs
+    ):
         response = await self._async_session_method('post', *args, **kwargs)
-        return self._unwrap_response(response)
+        return self._unwrap_response(response, resp_cls=resp_cls)
 
     # tx send machinery
 
@@ -1181,6 +1195,7 @@ class CLEOS:
         account: str,
         scope: str,
         table: str,
+        resp_cls: Struct | None = None,
         **kwargs
     ) -> list[dict]:
         """Get table rows from the blockchain.
@@ -1205,15 +1220,17 @@ class CLEOS:
             'json': True,
             **kwargs
         }
+        resp_cls = GetTableRowsResponse[resp_cls] if resp_cls else GetTableRowsResponse[dict]
+
         while not done:
             resp = self._post(
-                '/v1/chain/get_table_rows', json=params)
+                '/v1/chain/get_table_rows', json=params, resp_cls=resp_cls)
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
-            rows.extend(resp['rows'])
-            done = not resp['more']
+            rows.extend(resp.rows)
+            done = not resp.more
             if not done:
-                params['lower_bound'] = resp['next_key']
+                params['lower_bound'] = resp.next_key
 
         return rows
 
@@ -1222,6 +1239,7 @@ class CLEOS:
         account: str,
         scope: str,
         table: str,
+        resp_cls: Struct | None = None,
         **kwargs
     ) -> list[dict]:
         '''Async get table
@@ -1236,16 +1254,17 @@ class CLEOS:
             'json': True,
             **kwargs
         }
+        resp_cls = GetTableRowsResponse[resp_cls] if resp_cls else GetTableRowsResponse[dict]
 
         while not done:
             resp = await (self._async_post(
-                '/v1/chain/get_table_rows', json=params))
+                '/v1/chain/get_table_rows', json=params, resp_cls=resp_cls))
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
-            rows.extend(resp['rows'])
-            done = not resp['more']
+            rows.extend(resp.rows)
+            done = not resp.more
             if not done:
-                params['lower_bound'] = resp['next_key']
+                params['lower_bound'] = resp.next_key
 
         return rows
 

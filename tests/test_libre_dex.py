@@ -21,8 +21,8 @@ async def test_get_price():
 
     ares = (await cleos.aget_table('swap.libre', 'BTCUSD', 'stat'))[0]
 
-    a_quant_1 = Asset.from_str(res['pool1']['quantity'])
-    a_quant_2 = Asset.from_str(res['pool2']['quantity'])
+    a_quant_1 = Asset.from_str(ares['pool1']['quantity'])
+    a_quant_2 = Asset.from_str(ares['pool2']['quantity'])
 
     a_price = a_quant_1.to_decimal() / a_quant_2.to_decimal()
 

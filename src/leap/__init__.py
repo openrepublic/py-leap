@@ -1,1 +1,5 @@
-#!/usr/bin/env python3
+from leap.cleos import CLEOS
+
+__all__ = [
+    'CLEOS'
+]

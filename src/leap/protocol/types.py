@@ -1,12 +1,12 @@
-#!/usr/bin/env python3
-
-# 3.9 compat
 from __future__ import annotations
 from dataclasses import dataclass
 
 from abc import ABC, abstractmethod
 from decimal import Decimal
+from typing import TypeVar, Generic
 from binascii import hexlify
+
+from msgspec import Struct
 
 
 class ABCLeapType(ABC):
@@ -222,3 +222,11 @@ class Name(ABCLeapType):
     @staticmethod
     def _from_str(s: str) -> Name:
         return Name(s)
+
+
+T = TypeVar('T')
+class GetTableRowsResponse(Struct, Generic[T]):
+    rows: list[T]
+    more: bool
+    ram_payer: list[str] | None = None
+    next_key: str | None = None
