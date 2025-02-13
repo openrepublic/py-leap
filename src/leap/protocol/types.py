@@ -230,3 +230,8 @@ class GetTableRowsResponse(Struct, Generic[T]):
     more: bool
     ram_payer: list[str] | None = None
     next_key: str | None = None
+
+class ChainErrorResponse(Struct):
+    code: int
+    message: str
+    error: dict
