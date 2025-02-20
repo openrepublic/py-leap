@@ -116,6 +116,9 @@ class CLEOS:
             except msgspec.ValidationError:
                 logging.exception("could\'t unpack response into resp_cls type...")
 
+            except msgspec.DecodeError:
+                logging.exception("could\'t decode response, net fail?")
+
         if not hasattr(maybe_error, 'json'):
             return maybe_error
 
