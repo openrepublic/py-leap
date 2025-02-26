@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import time
 import base64
 import logging
@@ -13,6 +14,7 @@ from urllib3.util.retry import Retry
 
 import httpx
 import msgspec
+import antelope_rs
 
 from msgspec import Struct
 from requests.adapters import HTTPAdapter
@@ -23,11 +25,8 @@ from leap.tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
 from leap.protocol import (
     Asset,
     GetTableRowsResponse,
-    ChainErrorResponse,
     get_tapos_info,
     create_and_sign_tx,
-    gen_key_pair,
-    get_pub_key
 )
 
 
@@ -87,6 +86,7 @@ class CLEOS:
     def load_abi(self, account: str, abi: dict):
         '''Load abi dict into internal store
         '''
+        antelope_rs.load_abi(account, json.dumps(abi))
         self._loaded_abis[account] = abi
 
     def load_abi_file(self, account: str, abi_path: str | Path):
@@ -290,9 +290,8 @@ class CLEOS:
             chain_info['last_irreversible_block_id'])
 
         chain_id: str = chain_info['chain_id']
-        abis: dict[str, dict] = self._get_abis_for_actions(actions)
 
-        return create_and_sign_tx(chain_id, abis, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
+        return create_and_sign_tx(chain_id, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
 
     async def _a_create_signed_tx(
         self,
@@ -305,9 +304,8 @@ class CLEOS:
             chain_info['last_irreversible_block_id'])
 
         chain_id: str = chain_info['chain_id']
-        abis: dict[str, dict] = self._get_abis_for_actions(actions)
 
-        return create_and_sign_tx(chain_id, abis, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
+        return create_and_sign_tx(chain_id, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
 
     def push_actions(
         self,
@@ -533,7 +531,7 @@ class CLEOS:
             'name': 'setabi',
             'data': [
                 account_name,
-                abi
+                json.dumps(abi).encode('utf-8')
             ],
             'authorization': [{
                 'actor': account_name,
@@ -944,13 +942,13 @@ class CLEOS:
             '/v1/net/disconnect',
             json=endpoint)
 
-    def create_key_pair(self) -> tuple[str, str]:
+    def create_key_pair(self, key_type: int = 0) -> tuple[str, str]:
         '''Generates a key pair.
 
         :return: Private and public keys.
         :rtype: tuple[str, str]
         '''
-        priv, pub = gen_key_pair()
+        priv, pub = antelope_rs.gen_key_pair(key_type)
         return priv, pub
 
     def create_key_pairs(self, n: int) -> list[tuple[str, str]]:
@@ -976,7 +974,7 @@ class CLEOS:
         :param private_key: Private key to import.
         :type private_key: str
         '''
-        public_key = get_pub_key(private_key)
+        public_key = antelope_rs.get_pub_key(private_key)
         self.keys[account] = public_key
         self.private_keys[account] = private_key
         if public_key not in self._key_to_acc:

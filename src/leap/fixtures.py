@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import json
 import logging
 import subprocess
@@ -9,13 +7,12 @@ from contextlib import contextmanager
 
 import docker
 import pytest
+import antelope_rs
 
 from docker.types import Mount
 
-from leap.protocol import gen_key_pair
-
-from .cleos import CLEOS
-from .sugar import (
+from leap.cleos import CLEOS
+from leap.sugar import (
     get_container,
     get_free_port,
 )
@@ -162,7 +159,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     cmd += ['--http-validate-host', '0']
 
     if randomize:
-        priv, pub = gen_key_pair()
+        priv, pub = antelope_rs.gen_key_pair(0)
     else:
         priv, pub = ('5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL', 'EOS5GnobZ231eekYUJHGTcmy2qve1K23r5jSFQbMfwWTtPB7mFZ1L')
 
