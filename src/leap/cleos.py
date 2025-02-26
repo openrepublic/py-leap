@@ -235,20 +235,11 @@ class CLEOS:
         response = await self._async_session_method('post', *args, **kwargs)
         return self._unwrap_response(response, resp_cls=resp_cls)
 
-    # tx send machinery
-
-    def _get_abis_for_actions(self, actions: list[dict]) -> dict[str, dict]:
-        return {
-            action['account']: self.get_loaded_abi(action['account'])
-            for action in actions
-        }
-
     def _push_tx(
         self,
         tx: dict,
         retries: int = 2
     ) -> dict:
-        res = {}
         for i in range(1, retries + 1):
             try:
                 return self._post(
@@ -266,7 +257,6 @@ class CLEOS:
         tx: dict,
         retries: int = 2
     ) -> dict:
-        res = {}
         for i in range(1, retries + 1):
             try:
                 return await self._async_post(
