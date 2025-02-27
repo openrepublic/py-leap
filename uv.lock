@@ -576,7 +576,7 @@ snaps = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
     { name = "msgspec", specifier = ">=0.19.0" },
-    { name = "pyo3-antelope-rs", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.0/pyo3_antelope_rs-0.3.0-cp39-abi3-manylinux_2_34_x86_64.whl" },
+    { name = "pyo3-antelope-rs", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.1/pyo3_antelope_rs-0.3.1-cp39-abi3-manylinux_2_34_x86_64.whl" },
     { name = "requests", specifier = "<2.32.0" },
     { name = "trio-websocket", specifier = ">=0.12.2" },
 ]
@@ -618,13 +618,13 @@ wheels = [
 
 [[package]]
 name = "pyo3-antelope-rs"
-version = "0.3.0"
-source = { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.0/pyo3_antelope_rs-0.3.0-cp39-abi3-manylinux_2_34_x86_64.whl" }
+version = "0.3.1"
+source = { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.1/pyo3_antelope_rs-0.3.1-cp39-abi3-manylinux_2_34_x86_64.whl" }
 dependencies = [
     { name = "maturin" },
 ]
 wheels = [
-    { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.0/pyo3_antelope_rs-0.3.0-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:d7dc5a11e41351d2357fd58dbf09e35b1f88c03f2a29fd7e4267dda5ac4c2f9c" },
+    { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.1/pyo3_antelope_rs-0.3.1-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:5d8a3c2db8d061839e30e629fd6342c4b62033014c7df8ff7cc299e05ff6af3c" },
 ]
 
 [package.metadata]

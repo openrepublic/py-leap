@@ -129,7 +129,7 @@ def decode_block_result(
                             rows[i]['data'] = table_info
 
                     case _:
-                        logging.warning(f'unknown delta type: {delta["name"]}')
+                        logging.info(f'unknown delta type: {delta["name"]}')
 
         if result['traces']:
             tx_traces = antelope_rs.abi_unpack(

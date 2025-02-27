@@ -38,7 +38,7 @@ default-groups = [
 ]
 
 [tool.uv.sources.pyo3-antelope-rs]
-url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.0/pyo3_antelope_rs-0.3.0-cp39-abi3-manylinux_2_34_x86_64.whl"
+url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.1/pyo3_antelope_rs-0.3.1-cp39-abi3-manylinux_2_34_x86_64.whl"
 # git = "https://github.com/openrepublic/pyo3-antelope-rs.git"
 # rev = "8a0724b0504acdaf2af67e5e97e90a9411da26fa"
 # path = "../pyo3-antelope-rs"
