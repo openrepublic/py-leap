@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import json
 import logging
 import subprocess
@@ -9,13 +7,13 @@ from contextlib import contextmanager
 
 import docker
 import pytest
+import antelope_rs
 
 from docker.types import Mount
 
-from leap.protocol import gen_key_pair
-
-from .cleos import CLEOS
-from .sugar import (
+from leap.abis import STD_EOSIO_ABI
+from leap.cleos import CLEOS
+from leap.sugar import (
     get_container,
     get_free_port,
 )
@@ -52,6 +50,7 @@ def open_test_nodeos(request, tmp_path_factory):
     logging.info(f'launching {container_img} container...')
 
     http_port = get_free_port()
+    ship_port = get_free_port()
     cmd = ['nodeos', '-e', '-p', 'eosio', '--config-dir', '/', '--data-dir', '/data']
     cmd += [
         '>>', '/root/nodeos.log', '2>&1'
@@ -66,17 +65,23 @@ def open_test_nodeos(request, tmp_path_factory):
         name=f'{tmp_path.name}-leap',
         detach=True,
         remove=True,
-        ports={'8888/tcp': http_port},
+        ports={
+            '8888/tcp': http_port,
+            '18999/tcp': ship_port
+        },
         mounts=[Mount('/root', str(leap_path), 'bind')],
         command=container_cmd
     )
-    cleos = CLEOS(f'http://127.0.0.1:{http_port}', node_dir=leap_path)
+    cleos = CLEOS(
+        endpoint=f'http://127.0.0.1:{http_port}',
+        ship_endpoint=f'ws://127.0.0.1:{ship_port}',
+        node_dir=leap_path
+    )
 
     # preload apis
     rcleos = CLEOS('https://testnet.telos.net')
-    for account_name in ['eosio', 'eosio.token']:
-        abi = rcleos.get_abi(account_name)
-        cleos.load_abi(account_name, abi)
+    cleos.load_abi('eosio', STD_EOSIO_ABI)
+    cleos.load_abi('eosio.token', rcleos.get_abi('eosio.token'))
 
     # load keys
     ec, out = vtestnet.exec_run('cat /keys.json')
@@ -162,7 +167,7 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     cmd += ['--http-validate-host', '0']
 
     if randomize:
-        priv, pub = gen_key_pair()
+        priv, pub = antelope_rs.gen_key_pair(0)
     else:
         priv, pub = ('5Jr65kdYmn33C3UabzhmWDm2PuqbRfPuDStts3ZFNSBLM7TqaiL', 'EOS5GnobZ231eekYUJHGTcmy2qve1K23r5jSFQbMfwWTtPB7mFZ1L')
 

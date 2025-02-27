@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import json
 import time
 import base64
 import logging
@@ -13,6 +14,7 @@ from urllib3.util.retry import Retry
 
 import httpx
 import msgspec
+import antelope_rs
 
 from msgspec import Struct
 from requests.adapters import HTTPAdapter
@@ -23,11 +25,8 @@ from leap.tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
 from leap.protocol import (
     Asset,
     GetTableRowsResponse,
-    ChainErrorResponse,
     get_tapos_info,
     create_and_sign_tx,
-    gen_key_pair,
-    get_pub_key
 )
 
 
@@ -49,6 +48,7 @@ class CLEOS:
     def __init__(
         self,
         endpoint: str = 'http://127.0.0.1:8888',
+        ship_endpoint: str | None = None,
         node_dir: Path | None = None,
         logger = None
     ):
@@ -58,13 +58,14 @@ class CLEOS:
             self.logger = logger
 
         self.endpoint = endpoint
+        self.ship_endpoint = ship_endpoint
         self.node_dir = node_dir
 
         self.keys: dict[str, str] = {}
         self.private_keys: dict[str, str] = {}
         self._key_to_acc: dict[str, list[str]] = {}
 
-        self._loaded_abis: dict[str, dict] = {}
+        self._loaded_abis: dict[str, bytes] = {}
 
         self._sys_token_init = False
         self.sys_token_supply = Asset(0, DEFAULT_SYS_TOKEN_SYM)
@@ -84,18 +85,25 @@ class CLEOS:
 
     # local abi store methods
 
-    def load_abi(self, account: str, abi: dict):
+    def load_abi(self, account: str, abi: dict | str | bytes):
         '''Load abi dict into internal store
         '''
+        if isinstance(abi, dict):
+            abi = json.dumps(abi)
+
+        if isinstance(abi, str):
+            abi = abi.encode('utf-8')
+
+        antelope_rs.load_abi(account, abi)
         self._loaded_abis[account] = abi
 
     def load_abi_file(self, account: str, abi_path: str | Path):
         '''Load abi file into internal store
         '''
         with open(abi_path, 'rb') as abi_file:
-            self.load_abi(account, json_module.load(abi_file))
+            self.load_abi(account, abi_file.read())
 
-    def get_loaded_abi(self, account: str) -> dict:
+    def get_loaded_abi(self, account: str) -> bytes:
         '''Return a previously loaded abi
         '''
         if account not in self._loaded_abis:
@@ -235,20 +243,11 @@ class CLEOS:
         response = await self._async_session_method('post', *args, **kwargs)
         return self._unwrap_response(response, resp_cls=resp_cls)
 
-    # tx send machinery
-
-    def _get_abis_for_actions(self, actions: list[dict]) -> dict[str, dict]:
-        return {
-            action['account']: self.get_loaded_abi(action['account'])
-            for action in actions
-        }
-
     def _push_tx(
         self,
         tx: dict,
         retries: int = 2
     ) -> dict:
-        res = {}
         for i in range(1, retries + 1):
             try:
                 return self._post(
@@ -266,7 +265,6 @@ class CLEOS:
         tx: dict,
         retries: int = 2
     ) -> dict:
-        res = {}
         for i in range(1, retries + 1):
             try:
                 return await self._async_post(
@@ -290,9 +288,8 @@ class CLEOS:
             chain_info['last_irreversible_block_id'])
 
         chain_id: str = chain_info['chain_id']
-        abis: dict[str, dict] = self._get_abis_for_actions(actions)
 
-        return create_and_sign_tx(chain_id, abis, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
+        return create_and_sign_tx(chain_id, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
 
     async def _a_create_signed_tx(
         self,
@@ -305,9 +302,8 @@ class CLEOS:
             chain_info['last_irreversible_block_id'])
 
         chain_id: str = chain_info['chain_id']
-        abis: dict[str, dict] = self._get_abis_for_actions(actions)
 
-        return create_and_sign_tx(chain_id, abis, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
+        return create_and_sign_tx(chain_id, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
 
     def push_actions(
         self,
@@ -533,7 +529,7 @@ class CLEOS:
             'name': 'setabi',
             'data': [
                 account_name,
-                abi
+                json.dumps(abi).encode('utf-8')
             ],
             'authorization': [{
                 'actor': account_name,
@@ -944,13 +940,13 @@ class CLEOS:
             '/v1/net/disconnect',
             json=endpoint)
 
-    def create_key_pair(self) -> tuple[str, str]:
+    def create_key_pair(self, key_type: int = 0) -> tuple[str, str]:
         '''Generates a key pair.
 
         :return: Private and public keys.
         :rtype: tuple[str, str]
         '''
-        priv, pub = gen_key_pair()
+        priv, pub = antelope_rs.gen_key_pair(key_type)
         return priv, pub
 
     def create_key_pairs(self, n: int) -> list[tuple[str, str]]:
@@ -976,7 +972,7 @@ class CLEOS:
         :param private_key: Private key to import.
         :type private_key: str
         '''
-        public_key = get_pub_key(private_key)
+        public_key = antelope_rs.get_pub_key(private_key)
         self.keys[account] = public_key
         self.private_keys[account] = private_key
         if public_key not in self._key_to_acc:

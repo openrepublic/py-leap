@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 import socket
 import string
 import random
 import logging
-import tarfile
 
 from pathlib import Path
+
+from leap.protocol import Name, SymbolCode, Symbol, Asset
 
 
 #
@@ -288,3 +290,16 @@ def download_snapshot(
 
     logging.info('Operation completed successfully.')
     return final_bin_file_path
+
+
+class LeapJSONEncoder(json.JSONEncoder):
+    def default(self, obj):
+        # handle convenience types
+        if isinstance(obj, (Name, Asset, Symbol, SymbolCode)):
+            return str(obj)
+
+        # hex string on bytes
+        if isinstance(obj, (bytes, bytearray)):
+            return obj.hex()
+
+        return super().default(obj)
