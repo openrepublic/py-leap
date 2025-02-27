@@ -11,6 +11,7 @@ import antelope_rs
 
 from docker.types import Mount
 
+from leap.abis import STD_EOSIO_ABI
 from leap.cleos import CLEOS
 from leap.sugar import (
     get_container,
@@ -49,6 +50,7 @@ def open_test_nodeos(request, tmp_path_factory):
     logging.info(f'launching {container_img} container...')
 
     http_port = get_free_port()
+    ship_port = get_free_port()
     cmd = ['nodeos', '-e', '-p', 'eosio', '--config-dir', '/', '--data-dir', '/data']
     cmd += [
         '>>', '/root/nodeos.log', '2>&1'
@@ -63,17 +65,23 @@ def open_test_nodeos(request, tmp_path_factory):
         name=f'{tmp_path.name}-leap',
         detach=True,
         remove=True,
-        ports={'8888/tcp': http_port},
+        ports={
+            '8888/tcp': http_port,
+            '18999/tcp': ship_port
+        },
         mounts=[Mount('/root', str(leap_path), 'bind')],
         command=container_cmd
     )
-    cleos = CLEOS(f'http://127.0.0.1:{http_port}', node_dir=leap_path)
+    cleos = CLEOS(
+        endpoint=f'http://127.0.0.1:{http_port}',
+        ship_endpoint=f'ws://127.0.0.1:{ship_port}',
+        node_dir=leap_path
+    )
 
     # preload apis
     rcleos = CLEOS('https://testnet.telos.net')
-    for account_name in ['eosio', 'eosio.token']:
-        abi = rcleos.get_abi(account_name)
-        cleos.load_abi(account_name, abi)
+    cleos.load_abi('eosio', STD_EOSIO_ABI)
+    cleos.load_abi('eosio.token', rcleos.get_abi('eosio.token'))
 
     # load keys
     ec, out = vtestnet.exec_run('cat /keys.json')

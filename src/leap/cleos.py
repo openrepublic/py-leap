@@ -48,6 +48,7 @@ class CLEOS:
     def __init__(
         self,
         endpoint: str = 'http://127.0.0.1:8888',
+        ship_endpoint: str | None = None,
         node_dir: Path | None = None,
         logger = None
     ):
@@ -57,13 +58,14 @@ class CLEOS:
             self.logger = logger
 
         self.endpoint = endpoint
+        self.ship_endpoint = ship_endpoint
         self.node_dir = node_dir
 
         self.keys: dict[str, str] = {}
         self.private_keys: dict[str, str] = {}
         self._key_to_acc: dict[str, list[str]] = {}
 
-        self._loaded_abis: dict[str, dict] = {}
+        self._loaded_abis: dict[str, bytes] = {}
 
         self._sys_token_init = False
         self.sys_token_supply = Asset(0, DEFAULT_SYS_TOKEN_SYM)
@@ -83,19 +85,25 @@ class CLEOS:
 
     # local abi store methods
 
-    def load_abi(self, account: str, abi: dict):
+    def load_abi(self, account: str, abi: dict | str | bytes):
         '''Load abi dict into internal store
         '''
-        antelope_rs.load_abi(account, json.dumps(abi))
+        if isinstance(abi, dict):
+            abi = json.dumps(abi)
+
+        if isinstance(abi, str):
+            abi = abi.encode('utf-8')
+
+        antelope_rs.load_abi(account, abi)
         self._loaded_abis[account] = abi
 
     def load_abi_file(self, account: str, abi_path: str | Path):
         '''Load abi file into internal store
         '''
         with open(abi_path, 'rb') as abi_file:
-            self.load_abi(account, json_module.load(abi_file))
+            self.load_abi(account, abi_file.read())
 
-    def get_loaded_abi(self, account: str) -> dict:
+    def get_loaded_abi(self, account: str) -> bytes:
         '''Return a previously loaded abi
         '''
         if account not in self._loaded_abis:

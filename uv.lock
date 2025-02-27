@@ -545,13 +545,14 @@ wheels = [
 
 [[package]]
 name = "py-leap"
-version = "0.1a35"
+version = "0.1a36"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "msgspec" },
     { name = "pyo3-antelope-rs" },
     { name = "requests" },
+    { name = "trio-websocket" },
 ]
 
 [package.dev-dependencies]
@@ -575,8 +576,9 @@ snaps = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
     { name = "msgspec", specifier = ">=0.19.0" },
-    { name = "pyo3-antelope-rs", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.2.0/pyo3_antelope_rs-0.2a1-cp39-abi3-manylinux_2_34_x86_64.whl" },
+    { name = "pyo3-antelope-rs", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.0/pyo3_antelope_rs-0.3.0-cp39-abi3-manylinux_2_34_x86_64.whl" },
     { name = "requests", specifier = "<2.32.0" },
+    { name = "trio-websocket", specifier = ">=0.12.2" },
 ]
 
 [package.metadata.requires-dev]
@@ -616,13 +618,13 @@ wheels = [
 
 [[package]]
 name = "pyo3-antelope-rs"
-version = "0.2a1"
-source = { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.2.0/pyo3_antelope_rs-0.2a1-cp39-abi3-manylinux_2_34_x86_64.whl" }
+version = "0.3.0"
+source = { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.0/pyo3_antelope_rs-0.3.0-cp39-abi3-manylinux_2_34_x86_64.whl" }
 dependencies = [
     { name = "maturin" },
 ]
 wheels = [
-    { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.2.0/pyo3_antelope_rs-0.2a1-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:3b0d66528cb3d8676759ece8ef8c726b7eabda2bef0cbf52bb83c3d4e6e275dc" },
+    { url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.0/pyo3_antelope_rs-0.3.0-cp39-abi3-manylinux_2_34_x86_64.whl", hash = "sha256:d7dc5a11e41351d2357fd58dbf09e35b1f88c03f2a29fd7e4267dda5ac4c2f9c" },
 ]
 
 [package.metadata]
@@ -930,6 +932,21 @@ wheels = [
 ]
 
 [[package]]
+name = "trio-websocket"
+version = "0.12.2"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "exceptiongroup", marker = "python_full_version < '3.11'" },
+    { name = "outcome" },
+    { name = "trio" },
+    { name = "wsproto" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d1/3c/8b4358e81f2f2cfe71b66a267f023a91db20a817b9425dd964873796980a/trio_websocket-0.12.2.tar.gz", hash = "sha256:22c72c436f3d1e264d0910a3951934798dcc5b00ae56fc4ee079d46c7cf20fae", size = 33549 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/c7/19/eb640a397bba49ba49ef9dbe2e7e5c04202ba045b6ce2ec36e9cadc51e04/trio_websocket-0.12.2-py3-none-any.whl", hash = "sha256:df605665f1db533f4a386c94525870851096a223adcb97f72a07e8b4beba45b6", size = 21221 },
+]
+
+[[package]]
 name = "typing-extensions"
 version = "4.12.2"
 source = { registry = "https://pypi.org/simple" }
@@ -966,6 +983,18 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/60/d9/6625ead93412c5ce86db1f8b4f2a70b8043e0a7c1d30099ba3c6a81641ff/wmctrl-0.5.tar.gz", hash = "sha256:7839a36b6fe9e2d6fd22304e5dc372dbced2116ba41283ea938b2da57f53e962", size = 5202 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/13/ca/723e3f8185738d7947f14ee7dc663b59415c6dee43bd71575f8c7f5cd6be/wmctrl-0.5-py2.py3-none-any.whl", hash = "sha256:ae695c1863a314c899e7cf113f07c0da02a394b968c4772e1936219d9234ddd7", size = 4268 },
+]
+
+[[package]]
+name = "wsproto"
+version = "1.2.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "h11" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/c9/4a/44d3c295350d776427904d73c189e10aeae66d7f555bb2feee16d1e4ba5a/wsproto-1.2.0.tar.gz", hash = "sha256:ad565f26ecb92588a3e43bc3d96164de84cd9902482b130d0ddbaa9664a85065", size = 53425 }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/78/58/e860788190eba3bcce367f74d29c4675466ce8dddfba85f7827588416f01/wsproto-1.2.0-py3-none-any.whl", hash = "sha256:b9acddd652b585d75b20477888c56642fdade28bdfd3579aa24a4d2c037dd736", size = 24226 },
 ]
 
 [[package]]
