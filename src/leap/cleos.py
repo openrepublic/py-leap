@@ -1,29 +1,34 @@
 #!/usr/bin/env python3
 
-import sys
 import time
 import base64
 import logging
 import requests
-import binascii
 import json as json_module
 
-from copy import deepcopy
 from typing import Any
 from pathlib import Path
 from hashlib import sha256
 from urllib3.util.retry import Retry
 
-from datetime import datetime, timedelta
-
 import httpx
+import msgspec
 
+from msgspec import Struct
 from requests.adapters import HTTPAdapter
 
-from .sugar import random_leap_name
-from .errors import ChainHTTPError, ChainAPIError, ContractDeployError, TransactionPushError
-from .tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
-from .protocol import *
+from leap.sugar import random_leap_name
+from leap.errors import ChainHTTPError, ChainAPIError, ContractDeployError, TransactionPushError
+from leap.tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
+from leap.protocol import (
+    Asset,
+    GetTableRowsResponse,
+    ChainErrorResponse,
+    get_tapos_info,
+    create_and_sign_tx,
+    gen_key_pair,
+    get_pub_key
+)
 
 
 # disable warnings about connection retries
@@ -100,7 +105,20 @@ class CLEOS:
 
     # generic http+session handlers
 
-    def _unwrap_response(self, maybe_error: Any) -> dict:
+    def _unwrap_response(self, maybe_error: Any, resp_cls: Struct | None = None) -> dict:
+        if resp_cls:
+            try:
+                return msgspec.json.decode(
+                    maybe_error.text,
+                    type=resp_cls
+                )
+
+            except msgspec.ValidationError:
+                logging.exception("could\'t unpack response into resp_cls type...")
+
+            except msgspec.DecodeError:
+                logging.exception("could\'t decode response, net fail?")
+
         if not hasattr(maybe_error, 'json'):
             return maybe_error
 
@@ -145,13 +163,27 @@ class CLEOS:
 
         return getattr(self._session, method)(base_route + route, *args, headers=headers, **kwargs)
 
-    def _get(self, *args, **kwargs):
+    def _get(
+        self,
+        *args,
+        resp_cls: Struct | None = None,
+        **kwargs
+    ):
         return self._unwrap_response(
-            self._session_method('get', *args, **kwargs))
+            self._session_method('get', *args, **kwargs),
+            resp_cls=resp_cls
+        )
 
-    def _post(self, *args, **kwargs):
+    def _post(
+        self,
+        *args,
+        resp_cls: Struct | None = None,
+        **kwargs
+    ):
         return self._unwrap_response(
-            self._session_method('post', *args, **kwargs))
+            self._session_method('post', *args, **kwargs),
+            resp_cls=resp_cls
+        )
 
     async def _async_session_method(
         self,
@@ -185,13 +217,23 @@ class CLEOS:
         resp = await self._asession.request(method, url, headers=headers, **kwargs)
         return resp
 
-    async def _async_get(self, *args, **kwargs):
+    async def _async_get(
+        self,
+        *args,
+        resp_cls: Struct | None = None,
+        **kwargs
+    ):
         response = await self._async_session_method('get', *args, **kwargs)
-        return self._unwrap_response(response)
+        return self._unwrap_response(response, resp_cls=resp_cls)
 
-    async def _async_post(self, *args, **kwargs):
+    async def _async_post(
+        self,
+        *args,
+        resp_cls: Struct | None = None,
+        **kwargs
+    ):
         response = await self._async_session_method('post', *args, **kwargs)
-        return self._unwrap_response(response)
+        return self._unwrap_response(response, resp_cls=resp_cls)
 
     # tx send machinery
 
@@ -214,7 +256,7 @@ class CLEOS:
 
             except ChainAPIError as err:
                 if i == retries:  # that was last retry, raise
-                    raise TransactionPushError.from_other(err)
+                    raise TransactionPushError from err
 
                 else:
                     continue
@@ -232,7 +274,7 @@ class CLEOS:
 
             except ChainAPIError as err:
                 if i == retries:  # that was last retry, raise
-                    raise TransactionPushError.from_other(err)
+                    raise TransactionPushError from err
 
                 else:
                     continue
@@ -507,7 +549,7 @@ class CLEOS:
             return res
 
         except TransactionPushError as err:
-            raise ContractDeployError.from_other(err)
+            raise ContractDeployError from err
 
     def deploy_contract_from_path(
         self,
@@ -926,7 +968,7 @@ class CLEOS:
         self.logger.info(f'created {n} key pairs')
         return keys
 
-    def import_key(self, account: str, private_key: str):
+    def import_key(self, account: str, private_key: str) -> str:
         '''Imports a key pair for a given account.
 
         :param account: Account name.
@@ -941,6 +983,8 @@ class CLEOS:
             self._key_to_acc[public_key] = []
 
         self._key_to_acc[public_key] += [account]
+
+        return public_key
 
     def get_private_key(self, account: str) -> str:
         key = self.private_keys.get(account, None)
@@ -1161,6 +1205,7 @@ class CLEOS:
         account: str,
         scope: str,
         table: str,
+        resp_cls: Struct | None = None,
         **kwargs
     ) -> list[dict]:
         """Get table rows from the blockchain.
@@ -1185,15 +1230,17 @@ class CLEOS:
             'json': True,
             **kwargs
         }
+        resp_cls = GetTableRowsResponse[resp_cls] if resp_cls else GetTableRowsResponse[dict]
+
         while not done:
             resp = self._post(
-                '/v1/chain/get_table_rows', json=params)
+                '/v1/chain/get_table_rows', json=params, resp_cls=resp_cls)
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
-            rows.extend(resp['rows'])
-            done = not resp['more']
+            rows.extend(resp.rows)
+            done = not resp.more
             if not done:
-                params['lower_bound'] = resp['next_key']
+                params['lower_bound'] = resp.next_key
 
         return rows
 
@@ -1202,6 +1249,7 @@ class CLEOS:
         account: str,
         scope: str,
         table: str,
+        resp_cls: Struct | None = None,
         **kwargs
     ) -> list[dict]:
         '''Async get table
@@ -1216,16 +1264,17 @@ class CLEOS:
             'json': True,
             **kwargs
         }
+        resp_cls = GetTableRowsResponse[resp_cls] if resp_cls else GetTableRowsResponse[dict]
 
         while not done:
             resp = await (self._async_post(
-                '/v1/chain/get_table_rows', json=params))
+                '/v1/chain/get_table_rows', json=params, resp_cls=resp_cls))
 
             self.logger.debug(f'get_table {account} {scope} {table}: {resp}')
-            rows.extend(resp['rows'])
-            done = not resp['more']
+            rows.extend(resp.rows)
+            done = not resp.more
             if not done:
-                params['lower_bound'] = resp['next_key']
+                params['lower_bound'] = resp.next_key
 
         return rows
 

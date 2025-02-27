@@ -92,4 +92,5 @@ def test_c_storage(cleos_w_indextest):
 
 
 def test_wait_end(cleos_w_indextest):
-    breakpoint()
+    ...
+    # breakpoint()

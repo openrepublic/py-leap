@@ -166,9 +166,9 @@ class ChainHTTPError(Exception):
         )
 
 
-class TransactionPushError(ChainAPIError):
+class TransactionPushError(BaseException):
     ...
 
 
-class ContractDeployError(TransactionPushError):
+class ContractDeployError(BaseException):
     ...
