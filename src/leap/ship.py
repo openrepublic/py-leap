@@ -1,195 +1,146 @@
-import json
-import logging
+import os
+from functools import partial
+from contextlib import asynccontextmanager as acm
 
-from typing import OrderedDict
-from dataclasses import dataclass
-
+import trio
+import tractor
 import antelope_rs
+import pyarrow as pa
+import pyarrow.ipc
 from trio_websocket import open_websocket_url
+from pyo3_iceoryx2 import Pair0, Pair1
 
 from leap.abis import STD_ABI
-from leap.sugar import LeapJSONEncoder
+
+
+schema_bytes = {
+    "data_type": "LargeUtf8",
+}
+
+schema_block_position = {
+    "data_type": "Struct",
+    "children": [
+        {"name": "block_num", "data_type": "U32"},
+        {"name": "block_id", "data_type": "Utf8"}
+    ]
+}
+
+schema_get_blocks_result_v0 = {
+    "fields": [
+        {
+            "name": "head",
+            **schema_block_position
+        },
+        {
+            "name": "last_irreversible",
+            **schema_block_position
+        },
+        {
+            "name": "this_block",
+            "nullable": True,
+            **schema_block_position
+        },
+        {
+            "name": "prev_block",
+            "nullable": True,
+            **schema_block_position
+        },
+        {
+            "name": "block",
+            "nullable": True,
+            **schema_bytes
+        },
+        {
+            "name": "traces",
+            "nullable": True,
+            **schema_bytes
+        },
+        {
+            "name": "deltas",
+            "nullable": True,
+            **schema_bytes
+        }
+    ]
+}
 
 
 
-@dataclass
-class DecodedGetBlockResult:
-    block_num: int
-    block: OrderedDict
+async def stage_0_block_decoder(
+    stream_key: str,
+    output_key: str
+):
+    log = tractor.log.get_console_log(level='info')
+
+    input_pair = Pair1(stream_key)
+    out_pair = Pair0(output_key)
+    input_pair.connect()
+    out_pair.connect()
+    log.info('connected')
+    while True:
+        msg = input_pair.recv()
+        out_pair.send(msg)
+        await trio.sleep(0)
 
 
-def decode_block_result(
-    result: dict,
-    delta_whitelist: dict[str, list[str]] = {},
-    action_whitelist: dict[str, list[str]] = {}
-) -> DecodedGetBlockResult:
-    block_num = result['this_block']['block_num']
+async def result_decoder(
+    stream_key: str,
+    output_key: str
+):
+    antelope_rs.load_abi('std', STD_ABI)
+    log = tractor.log.get_console_log(level='info')
+    input_pair = Pair1(stream_key)
+    out = Pair0(output_key)
+    input_pair.connect()
+    out.connect()
 
-    def maybe_decode_account_row(row):
-        if not row['present']:
-            return
+    log.info('connected')
+    while True:
+        msg = input_pair.recv()
 
-        _atype, account_delta = antelope_rs.abi_unpack('std', 'account', row['data'])
-        account = str(account_delta['name'])
-
-        if account == 'eosio':
-            return
-
-        abi_raw = account_delta['abi']
-        if len(abi_raw) > 0:
-            account = str(account_delta['name'])
-            abi = antelope_rs.abi_unpack('std', 'abi', abi_raw)
-            account_delta['abi'] = abi
-            antelope_rs.load_abi(
-                account,
-                json.dumps(abi, cls=LeapJSONEncoder).encode('utf-8')
-            )
-            logging.info(f'updated abi for {account}, {len(abi_raw)} bytes')
-
-        row['data'] = account_delta
-
-    def maybe_decode_contract_row(row):
-        _dtype, contract_delta = antelope_rs.abi_unpack('std', 'contract_row', row['data'])
-        table = str(contract_delta['table'])
-        code = str(contract_delta['code'])
-
-        if len(delta_whitelist) > 0:
-            relevant_tables = delta_whitelist.get(code, [])
-            if (
-                '*' not in relevant_tables
-                and
-                table not in relevant_tables
-            ):
-                return
-
-        try:
-            row['type'] = table
-            row['data'] = antelope_rs.abi_unpack(
-                code,
-                table,
-                contract_delta['value'],
-            )
-            return row
-
-        except* Exception as e:
-            e.add_note(f'while decoding table delta {code}::{contract_delta["table"]}')
-            raise e
-
-    def maybe_decode_tx_trace(tx_trace):
-        for _trace_type, act_trace in tx_trace['action_traces']:
-            action = act_trace['act']
-            account = str(action['account'])
-            name = str(action['name'])
-
-            if account == 'eosio' and name == 'onblock':
-                continue
-
-            if len(action_whitelist) > 0:
-                relevant_actions = action_whitelist.get(account, [])
-                if name not in relevant_actions:
-                    continue
-
-            try:
-                action['data'] = antelope_rs.abi_unpack(account, name, action['data'])
-
-            except* Exception as e:
-                e.add_note(f'while decoding action trace {account}::{name}')
-                raise e
+        block = antelope_rs.abi_unpack_arrow(
+            'std',
+            'get_blocks_result_v0',
+            msg[1:],
+            schema_get_blocks_result_v0
+        )
+        log.info(f'unpacked into arrow ipc {len(block)}')
+        out.send(block)
 
 
-    try:
-        if result['block']:
-            block = antelope_rs.abi_unpack('std', 'signed_block', result['block'])
-            result['block'] = block
-
-        if result['deltas']:
-            deltas = antelope_rs.abi_unpack('std', 'table_delta[]', result['deltas'])
-            result['deltas'] = deltas
-
-            for _dtype, delta in deltas:
-                rows = delta['rows']
-                match delta['name']:
-                    case 'account':
-                        [maybe_decode_account_row(row) for row in rows]
-
-                    case 'contract_row':
-                        [maybe_decode_contract_row(row) for row in rows]
-
-                    case (
-                        'permission' |
-                        'account_metadata' |
-                        'contract_table' |
-                        'resource_usage' |
-                        'resource_limits' |
-                        'resource_limits_state'
-                    ):
-                        for i in range(len(rows)):
-                            _dtype, table_info = antelope_rs.abi_unpack(
-                                'std', delta['name'], rows[i]['data'])
-                            rows[i]['data'] = table_info
-
-                    case _:
-                        logging.info(f'unknown delta type: {delta["name"]}')
-
-        if result['traces']:
-            tx_traces = antelope_rs.abi_unpack(
-                'std', 'transaction_trace[]', result['traces'])
-
-            result['traces'] = tx_traces
-
-            [maybe_decode_tx_trace(tx_trace) for _type, tx_trace in tx_traces]
-
-    except Exception as e:
-        e.add_note(f'while decoding block {block_num}')
-        raise e
-
-    return DecodedGetBlockResult(block_num, result)
-
-
-# generator, yields blocks
-async def open_state_history(
+async def ship_reader(
+    output_key: str,
     endpoint: str,
     start_block_num: int,
     end_block_num: int = (2 ** 32) - 2,
     max_messages_in_flight: int = 10,
+    max_message_size: int = 512 * 1024 * 1024,
     irreversible_only: bool = False,
     fetch_block: bool = True,
     fetch_traces: bool = True,
     fetch_deltas: bool = True,
-    max_message_size: int = 512 * 1024 * 1024,
-    contracts: dict[str, dict | str | bytes] = {},
-    action_whitelist: dict[str, list[str]] = {},
-    delta_whitelist: dict[str, list[str]] = {}
 ):
+    log = tractor.log.get_console_log(level='info')
+    log.info(f'connecting to ws {endpoint}...')
     antelope_rs.load_abi('std', STD_ABI)
-
-    for account, abi in contracts.items():
-        if isinstance(abi, dict):
-            abi = json.dumps(abi)
-
-        if isinstance(abi, str):
-            abi = abi.encode('utf-8')
-
-        antelope_rs.load_abi(account, abi)
-
+    out = Pair0(output_key)
+    out.connect()
     async with open_websocket_url(
         endpoint,
         max_message_size=max_message_size,
         message_queue_size=max_messages_in_flight
     ) as ws:
-        # first message is ABI
+        # First message is ABI
         _ = await ws.get_message()
+        log.info('got abi')
 
-        # send get_status_request
-        await ws.send_message(
-            antelope_rs.abi_pack('std', 'request', ['get_status_request_v0', {}]))
+        # Send get_status_request
+        await ws.send_message(antelope_rs.abi_pack('std', 'request', ['get_status_request_v0', {}]))
 
-        # receive get_status_result
+        # Receive get_status_result
         status_result_bytes = await ws.get_message()
         status = antelope_rs.abi_unpack('std', 'result', status_result_bytes)
-        logging.info(status)
-
-        # send get_blocks_request
+        log.info(status)
+        # Send get_blocks_request
         get_blocks_msg = antelope_rs.abi_pack(
             'std',
             'request',
@@ -209,28 +160,121 @@ async def open_state_history(
         )
         await ws.send_message(get_blocks_msg)
 
-        # receive blocks & manage acks
-        acked_block = start_block_num
+        # Receive blocks & manage acks
+        unacked_msgs = max_messages_in_flight
         block_num = start_block_num - 1
         while block_num != end_block_num:
-            # receive get_blocks_result
+            # Receive get_blocks_result
             result_bytes = await ws.get_message()
-            _result_type, result = antelope_rs.abi_unpack('std', 'result', result_bytes)
-            block = decode_block_result(
-                result,
-                delta_whitelist=delta_whitelist,
-                action_whitelist=action_whitelist
-            )
-            block_num = block.block_num
+            unacked_msgs += 1
+            out.send(result_bytes)
 
-            yield block
-
-            if acked_block == block_num:
-                # ack next batch of messages
+            if unacked_msgs > max_messages_in_flight:
+                # Ack next batch of messages
                 await ws.send_message(
                     antelope_rs.abi_pack(
                         'std',
-                        'request', [
-                            'get_blocks_ack_request_v0', {'num_messages': max_messages_in_flight}]))
+                        'request',
+                        ['get_blocks_ack_request_v0', {'num_messages': max_messages_in_flight}]
+                    )
+                )
+                log.info('ack next')
+                unacked_msgs = 0
 
-                acked_block += max_messages_in_flight
+
+@tractor.context
+async def sync_bridge(
+    ctx: tractor.Context,
+    stream_key: str
+) -> None:
+    log = tractor.log.get_console_log(level='info')
+    await ctx.started()
+    try:
+        async with ctx.open_stream() as stream:
+            try:
+                _input = Pair1(stream_key)
+                _input.connect()
+                log.info('connected!')
+                while True:
+                    msg = _input.recv()
+                    await stream.send(msg)
+            except BaseException as berr:
+                log.exception('i am stupid UY guy..')
+                raise berr
+    except BaseException as berr:
+        log.exception("we errored with")
+        raise berr
+
+
+
+async def _final_streamer(send_chan, *args, task_status=trio.TASK_STATUS_IGNORED, **kwargs):
+    log = tractor.log.get_console_log(level='info')
+
+    root_key = f'{os.getpid()}-open_state_history'
+    result_key = root_key + '.result'
+
+    ship_reader_key = root_key + '.ship_reader'
+    result_decoder_key = root_key + '.result_decoder'
+
+    async with tractor.open_nursery(
+        loglevel='info',
+        debug_mode=True,
+    ) as an:
+        await an.run_in_actor(
+            ship_reader,
+            output_key=ship_reader_key,
+            **kwargs
+        )
+        await an.run_in_actor(
+            result_decoder,
+            stream_key=ship_reader_key,
+            output_key=result_decoder_key,
+        )
+        await an.run_in_actor(
+            stage_0_block_decoder,
+            stream_key=result_decoder_key,
+            output_key=result_key,
+        )
+
+        portal = await an.start_actor(
+            'sync_bridge', enable_modules=[__name__])
+
+        async with (
+            portal.open_context(
+                sync_bridge,
+                stream_key=result_key
+            ) as (ctx, _sent),
+            ctx.open_stream() as stream,
+            # send_chan,  # TRIO BUG MAYBE!?
+        ):
+            task_status.started(stream)
+            # add to be able to keep streaming
+            # await trio.sleep_forever()
+
+        log.error("BYE MISS LAURA")
+
+
+@acm
+async def open_state_history(
+    *args, **kwargs
+):
+    log = tractor.log.get_console_log()
+    send_c, recv_c = trio.open_memory_channel(0)
+    async def __real_final_streamer(stream):
+        try:
+            async with send_c:
+                async for msg in stream:
+                    reader = pa.ipc.RecordBatchStreamReader(pa.BufferReader(msg))
+                    result = reader.read_all()
+                    await send_c.send(result)
+        except BaseException as berr:
+            log.exception('real boi got cucked')
+            raise berr
+
+    async with (
+        trio.open_nursery() as n
+    ):
+        stream = await n.start(partial(_final_streamer, send_c, *args, **kwargs))
+        n.start_soon(__real_final_streamer, stream)
+        yield recv_c
+

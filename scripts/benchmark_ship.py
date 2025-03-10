@@ -1,4 +1,7 @@
 import time
+from cProfile import Profile
+from pstats import SortKey, Stats
+
 import trio
 from leap.ship import open_state_history
 
@@ -14,6 +17,7 @@ async def _main():
     async for block in open_state_history(
         ship_endpoint,
         start_block_num,
+        max_messages_in_flight=20,
         action_whitelist={'_': []},
         delta_whitelist={'_': []}
     ):
@@ -33,4 +37,16 @@ async def _main():
 
 
 if __name__ == '__main__':
-    trio.run(_main)
+#    with Profile() as profile:
+    try:
+        trio.run(_main)
+
+    except KeyboardInterrupt:
+        ...
+
+#        (
+#            Stats(profile)
+#            .strip_dirs()
+#            .sort_stats(SortKey.CALLS)
+#            .print_stats()
+#        )
