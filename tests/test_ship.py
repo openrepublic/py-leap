@@ -1,8 +1,7 @@
-import time
-
-import trio
+import json
 
 from leap.ship import open_state_history
+from leap.sugar import LeapJSONEncoder
 
 
 async def test_ship(cleos_bs):
@@ -21,45 +20,9 @@ async def test_ship(cleos_bs):
         }
     ) as rchan:
         async for block in rchan:
+            print(json.dumps(block, indent=4, cls=LeapJSONEncoder))
             blocks.append(block)
 
     block = blocks[0]
 
-    assert block['header']['this_block']['block_num'] == receipt['processed']['block_num']
-
-
-async def test_manual():
-    # http_endpoint = 'http://127.0.0.1:9999'
-    ship_endpoint = 'ws://127.0.0.1:29999'
-
-    samples = []
-    sample_time = 1.0
-    max_samples = 10
-    last_stime = time.time()
-    block_delta = 0
-
-    with trio.CancelScope() as cscope:
-        async with open_state_history(
-            endpoint=ship_endpoint,
-            sh_args={'start_block_num': 135_764_267},
-            # debug_mode=True
-        ) as rchan:
-            try:
-                async for block in rchan:
-                    block_num = block['header']['this_block']['block_num']
-                    block_delta += 1
-                    now = time.time()
-                    if now - last_stime >= sample_time:
-                        samples.append(block_delta)
-                        block_delta = 0
-                        last_stime = now
-                        if len(samples) > max_samples:
-                            samples.pop(0)
-
-                        speed_avg = int(sum(samples) / len(samples))
-                        print(f'[{block_num}] speed avg: {speed_avg:,} blocks/sec')
-
-
-            except KeyboardInterrupt:
-                cscope.cancel()
-
+    assert block['this_block']['block_num'] == receipt['processed']['block_num']

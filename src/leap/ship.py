@@ -132,7 +132,7 @@ async def block_joiner(
             await schan.send(payload)
 
             # maybe signal eof
-            last_block_num = block_batch[-1]['header']['this_block']['block_num']
+            last_block_num = block_batch[-1]['this_block']['block_num']
             if last_block_num == sh_args.end_block_num - 1:
                 await ws_chan.send(b'eof')
                 await schan.send(b'')
@@ -158,17 +158,14 @@ async def block_joiner(
 
                     decoded_msg = msgspec.msgpack.decode(payload.data)
 
-                    attr_name: str
                     if payload.abi_type == 'block_header':
-                        attr_name = 'header'
+                        block.update(decoded_msg)
 
                     else:
-                        attr_name = payload.block_attr
-
-                    block[attr_name] = decoded_msg
+                        block[payload.block_attr] = decoded_msg
 
                     if (
-                        'header' in block
+                        'head' in block
                         and
                         'block' in block
                         and
@@ -278,7 +275,12 @@ async def result_decoder(
             await send(
                 payload.index,
                 'block_header',
-                msgspec.msgpack.encode(result)
+                msgspec.msgpack.encode({
+                    'head': result['head'],
+                    'last_irreversible': result['last_irreversible'],
+                    'prev_block': result['prev_block'],
+                    'this_block': result['this_block']
+                })
             )
 
     log.info('result_decoder exit')
