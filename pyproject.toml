@@ -10,9 +10,7 @@ dependencies = [
     "httpx>=0.28.1,<0.29",
     "msgspec>=0.19.0",
     "pyo3-antelope-rs",
-    "pyo3-iceoryx2",
     "trio-websocket>=0.12.2",
-    "pyarrow>=19.0.1",
     "websockets>=15.0.1",
     "tractor",
 ]
@@ -42,16 +40,14 @@ default-groups = [
 ]
 
 [tool.uv.sources]
-tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "ce537bc0101338ff481ed45a473f61efbc2cde93" }
+tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "1bbf1f7ab574514586cbd25ae902eeb708f574c5" }
+# tractor = { path = "../tractor" }
 
 [tool.uv.sources.pyo3-antelope-rs]
 # url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.1/pyo3_antelope_rs-0.3.1-cp39-abi3-manylinux_2_34_x86_64.whl"
 # git = "https://github.com/openrepublic/pyo3-antelope-rs.git"
 # rev = "8a0724b0504acdaf2af67e5e97e90a9411da26fa"
 path = "../pyo3-antelope-rs"
-
-[tool.uv.sources.pyo3-iceoryx2]
-path = "../pyo3-iceoryx2"
 
 [tool.hatch.build.targets.sdist]
 include = ["src/leap"]

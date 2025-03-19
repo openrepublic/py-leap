@@ -1,134 +1,312 @@
+from __future__ import annotations
 import os
-from functools import partial
-from contextlib import asynccontextmanager as acm
+from typing import Any
+from itertools import cycle
+from contextlib import (
+    ExitStack,
+    asynccontextmanager as acm
+)
 
 import trio
 import tractor
+import msgspec
 import antelope_rs
-import pyarrow as pa
-import pyarrow.ipc
+from msgspec import (
+    Struct,
+    to_builtins
+)
+from tractor.ipc import (
+    RBToken,
+    open_ringbuf,
+    attach_to_ringbuf_schannel,
+    attach_to_ringbuf_rchannel,
+    attach_to_ringbuf_channel,
+)
+from tractor.trionics import gather_contexts
 from trio_websocket import open_websocket_url
-from pyo3_iceoryx2 import Pair0, Pair1
 
 from leap.abis import STD_ABI
 
-
-schema_bytes = {
-    "data_type": "LargeUtf8",
-}
-
-schema_block_position = {
-    "data_type": "Struct",
-    "children": [
-        {"name": "block_num", "data_type": "U32"},
-        {"name": "block_id", "data_type": "Utf8"}
-    ]
-}
-
-schema_get_blocks_result_v0 = {
-    "fields": [
-        {
-            "name": "head",
-            **schema_block_position
-        },
-        {
-            "name": "last_irreversible",
-            **schema_block_position
-        },
-        {
-            "name": "this_block",
-            "nullable": True,
-            **schema_block_position
-        },
-        {
-            "name": "prev_block",
-            "nullable": True,
-            **schema_block_position
-        },
-        {
-            "name": "block",
-            "nullable": True,
-            **schema_bytes
-        },
-        {
-            "name": "traces",
-            "nullable": True,
-            **schema_bytes
-        },
-        {
-            "name": "deltas",
-            "nullable": True,
-            **schema_bytes
-        }
-    ]
-}
+log = tractor.log.get_logger(__name__)
 
 
+SIGNED_BLOCK_TYPE = 'signed_block'
+DELTAS_ARRAY_TYPE = 'table_delta[]'
+TRACES_ARRAY_TYPE = 'transaction_trace[]'
 
-async def stage_0_block_decoder(
-    stream_key: str,
-    output_key: str
+
+class StateHistoryArgs(Struct, frozen=True):
+    start_block_num: int
+    end_block_num: int = (2 ** 32) - 2
+    max_messages_in_flight: int = 4000
+    max_message_size: int = 512 * 1024 * 1024
+    irreversible_only: bool = False
+    fetch_block: bool = True
+    fetch_traces: bool = True
+    fetch_deltas: bool = True
+
+    def as_msg(self):
+        return to_builtins(self)
+
+    @classmethod
+    def from_msg(cls, msg: dict) -> StateHistoryArgs:
+        if isinstance(msg, StateHistoryArgs):
+            return msg
+
+        return StateHistoryArgs(**msg)
+
+
+class TaggedPayload(Struct, frozen=True):
+    index: int
+    abi_type: str
+    data: bytes
+
+    def decode_antelope(self) -> bytes:
+        return antelope_rs.abi_unpack_msgspec(
+            'std',
+            self.abi_type,
+            self.data
+        )
+
+    def decode(self, *args, **kwargs) -> Any:
+        return msgspec.msgpack.decode(
+            self.decode_antelope(), *args, **kwargs
+        )
+
+    @property
+    def block_attr(self) -> str:
+        if self.abi_type == SIGNED_BLOCK_TYPE:
+            return 'block'
+
+        if self.abi_type == DELTAS_ARRAY_TYPE:
+            return 'deltas'
+
+        if self.abi_type == TRACES_ARRAY_TYPE:
+            return 'traces'
+
+        raise ValueError(f'Unknown block attr for abi type {self.abi_type}')
+
+
+@tractor.context
+async def block_joiner(
+    ctx: tractor.Context,
+    inputs: list[RBToken],
+    out_token: RBToken,
+    ws_token: RBToken,
+    sh_args: StateHistoryArgs
 ):
-    log = tractor.log.get_console_log(level='info')
+    sh_args = StateHistoryArgs.from_msg(sh_args)
+    unacked_msgs = 0
+    next_index = 0
 
-    input_pair = Pair1(stream_key)
-    out_pair = Pair0(output_key)
-    input_pair.connect()
-    out_pair.connect()
-    log.info('connected')
-    while True:
-        msg = input_pair.recv()
-        out_pair.send(msg)
-        await trio.sleep(0)
+    wip_block_map: dict[int, dict] = {}
+    ready_block_map: dict[int, dict] = {}
+
+    end_reached = trio.Event()
+
+    async with (
+        trio.open_nursery() as n,
+        attach_to_ringbuf_schannel(out_token) as schan,
+        attach_to_ringbuf_schannel(ws_token) as ws_chan,
+    ):
+        async def _process_ready_block(index: int):
+            nonlocal next_index, unacked_msgs
+
+            # remove from wip map and put in ready map
+            block = wip_block_map.pop(index)
+            ready_block_map[index] = block
+
+            # remove all in-order blocks from ready map
+            block_batch = []
+            while next_index in ready_block_map:
+                next_block = ready_block_map.pop(next_index)
+                block_batch.append(next_block)
+                next_index += 1
+
+            # no ready blocks
+            if len(block_batch) == 0:
+                return
+
+            # send all ready blocks as a single batch
+            payload = msgspec.msgpack.encode(block_batch)
+            await schan.send(payload)
+
+            # maybe signal eof
+            last_block_num = block_batch[-1]['header']['this_block']['block_num']
+            if last_block_num == sh_args.end_block_num - 1:
+                await ws_chan.send(b'eof')
+                await schan.send(b'')
+                end_reached.set()
+                return
+
+            # maybe signal ws ack
+            unacked_msgs += len(block_batch)
+            if unacked_msgs == sh_args.max_messages_in_flight:
+                await ws_chan.send(b'ack')
+                unacked_msgs = 0
 
 
-async def result_decoder(
-    stream_key: str,
-    output_key: str
+        async def _input_reader(in_token: RBToken):
+            async with attach_to_ringbuf_rchannel(in_token) as rchan:
+                async for msg in rchan:
+                    payload = msgspec.msgpack.decode(msg, type=TaggedPayload)
+
+                    block = wip_block_map.get(payload.index, None)
+                    if not block:
+                        block = {}
+                        wip_block_map[payload.index] = block
+
+                    decoded_msg = msgspec.msgpack.decode(payload.data)
+
+                    attr_name: str
+                    if payload.abi_type == 'block_header':
+                        attr_name = 'header'
+
+                    else:
+                        attr_name = payload.block_attr
+
+                    block[attr_name] = decoded_msg
+
+                    if (
+                        'header' in block
+                        and
+                        'block' in block
+                        and
+                        'deltas' in block
+                        and
+                        'traces' in block
+                    ):
+                        await _process_ready_block(payload.index)
+
+        for in_token in inputs:
+            n.start_soon(_input_reader, in_token)
+
+        await ctx.started()
+        await end_reached.wait()
+        n.cancel_scope.cancel()
+
+    log.info('block_joiner exit')
+
+
+@tractor.context
+async def generic_decoder(
+    ctx: tractor.Context,
+    in_token: RBToken,
+    out_token: RBToken,
 ):
     antelope_rs.load_abi('std', STD_ABI)
-    log = tractor.log.get_console_log(level='info')
-    input_pair = Pair1(stream_key)
-    out = Pair0(output_key)
-    input_pair.connect()
-    out.connect()
 
-    log.info('connected')
-    while True:
-        msg = input_pair.recv()
+    async with (
+        attach_to_ringbuf_channel(in_token, out_token) as chan
+    ):
+        await ctx.started()
+        async for msg in chan:
+            payload = msgspec.msgpack.decode(msg, type=TaggedPayload)
 
-        block = antelope_rs.abi_unpack_arrow(
-            'std',
-            'get_blocks_result_v0',
-            msg[1:],
-            schema_get_blocks_result_v0
-        )
-        log.info(f'unpacked into arrow ipc {len(block)}')
-        out.send(block)
+            if payload.abi_type == 'block_header':
+                await chan.send(msg)
+                continue
+
+            result = payload.decode_antelope()
+
+            await chan.send(
+                msgspec.msgpack.encode(
+                    TaggedPayload(
+                        index=payload.index,
+                        abi_type=payload.abi_type,
+                        data=result
+                    )
+                )
+            )
+
+    log.info('generic_decoder exit')
 
 
-async def ship_reader(
-    output_key: str,
-    endpoint: str,
-    start_block_num: int,
-    end_block_num: int = (2 ** 32) - 2,
-    max_messages_in_flight: int = 10,
-    max_message_size: int = 512 * 1024 * 1024,
-    irreversible_only: bool = False,
-    fetch_block: bool = True,
-    fetch_traces: bool = True,
-    fetch_deltas: bool = True,
+@tractor.context
+async def result_decoder(
+    ctx: tractor.Context,
+    in_token: RBToken,
+    outputs: list[RBToken]
 ):
-    log = tractor.log.get_console_log(level='info')
+    antelope_rs.load_abi('std', STD_ABI)
+
+    async with (
+        gather_contexts([
+            attach_to_ringbuf_schannel(token)
+            for token in outputs
+        ]) as out_channels,
+        attach_to_ringbuf_rchannel(in_token) as rchan
+    ):
+        turn = cycle(range(len(outputs)))
+
+        async def send(
+            index: int,
+            abi_type: str,
+            data: bytes
+        ):
+            '''
+            Round robin send
+
+            '''
+            next_index = next(turn)
+            await out_channels[next_index].send(
+                msgspec.msgpack.encode(TaggedPayload(
+                    index=index,
+                    abi_type=abi_type,
+                    data=data
+                ))
+            )
+
+        await ctx.started()
+        async for msg in rchan:
+            payload = msgspec.msgpack.decode(msg, type=TaggedPayload)
+            result = payload.decode()
+
+            for res_attr, abi_type in [
+                ('block', SIGNED_BLOCK_TYPE),
+                ('deltas', DELTAS_ARRAY_TYPE),
+                ('traces', TRACES_ARRAY_TYPE)
+            ]:
+                if result[res_attr]:
+                    await send(
+                        payload.index,
+                        abi_type,
+                        bytes.fromhex(result[res_attr])
+                    )
+                    result.pop(res_attr)
+
+            await send(
+                payload.index,
+                'block_header',
+                msgspec.msgpack.encode(result)
+            )
+
+    log.info('result_decoder exit')
+
+
+@tractor.context
+async def ship_reader(
+    ctx: tractor.Context,
+    out_token: RBToken,
+    ws_token: RBToken,
+    endpoint: str,
+    sh_args: StateHistoryArgs
+):
+    sh_args = StateHistoryArgs.from_msg(sh_args)
     log.info(f'connecting to ws {endpoint}...')
     antelope_rs.load_abi('std', STD_ABI)
-    out = Pair0(output_key)
-    out.connect()
-    async with open_websocket_url(
-        endpoint,
-        max_message_size=max_message_size,
-        message_queue_size=max_messages_in_flight
-    ) as ws:
+
+    end_reached = trio.Event()
+
+    async with (
+        trio.open_nursery() as n,
+        attach_to_ringbuf_schannel(out_token) as schan,
+        open_websocket_url(
+            endpoint,
+            max_message_size=sh_args.max_message_size,
+            message_queue_size=sh_args.max_messages_in_flight
+        ) as ws
+    ):
         # First message is ABI
         _ = await ws.get_message()
         log.info('got abi')
@@ -147,134 +325,194 @@ async def ship_reader(
             [
                 'get_blocks_request_v0',
                 {
-                    'start_block_num': start_block_num,
-                    'end_block_num': end_block_num + 1,
-                    'max_messages_in_flight': max_messages_in_flight,
+                    'start_block_num': sh_args.start_block_num,
+                    'end_block_num': sh_args.end_block_num,
+                    'max_messages_in_flight': sh_args.max_messages_in_flight,
                     'have_positions': [],
-                    'irreversible_only': irreversible_only,
-                    'fetch_block': fetch_block,
-                    'fetch_traces': fetch_traces,
-                    'fetch_deltas': fetch_deltas
+                    'irreversible_only': sh_args.irreversible_only,
+                    'fetch_block': sh_args.fetch_block,
+                    'fetch_traces': sh_args.fetch_traces,
+                    'fetch_deltas': sh_args.fetch_deltas
                 }
             ]
         )
         await ws.send_message(get_blocks_msg)
 
-        # Receive blocks & manage acks
-        unacked_msgs = max_messages_in_flight
-        block_num = start_block_num - 1
-        while block_num != end_block_num:
-            # Receive get_blocks_result
-            result_bytes = await ws.get_message()
-            unacked_msgs += 1
-            out.send(result_bytes)
+        async def session_handler(task_status: trio.TASK_STATUS_IGNORED):
+            async with attach_to_ringbuf_rchannel(ws_token) as rchan:
+                task_status.started()
+                async for msg in rchan:
+                    if msg == b'ack':
+                        await ws.send_message(
+                            antelope_rs.abi_pack(
+                                'std',
+                                'request',
+                                [
+                                    'get_blocks_ack_request_v0',
+                                    {'num_messages': sh_args.max_messages_in_flight}
+                                ]
+                            )
+                        )
 
-            if unacked_msgs > max_messages_in_flight:
-                # Ack next batch of messages
-                await ws.send_message(
-                    antelope_rs.abi_pack(
-                        'std',
-                        'request',
-                        ['get_blocks_ack_request_v0', {'num_messages': max_messages_in_flight}]
-                    )
+                    elif msg == b'eof':
+                        end_reached.set()
+
+        async def msg_proxy():
+            msg_index = 0
+            while True:
+                msg = await ws.get_message()
+
+                payload = TaggedPayload(
+                    index=msg_index, abi_type='get_blocks_result_v0', data=msg[1:]
                 )
-                log.info('ack next')
-                unacked_msgs = 0
+
+                await schan.send(msgspec.msgpack.encode(payload))
+                msg_index += 1
+
+        await n.start(session_handler)
+        n.start_soon(msg_proxy)
+        await ctx.started()
+        await end_reached.wait()
+        await schan.send(b'')
+        n.cancel_scope.cancel()
+
+    log.info('ship_reader exit')
 
 
-@tractor.context
-async def sync_bridge(
-    ctx: tractor.Context,
-    stream_key: str
-) -> None:
-    log = tractor.log.get_console_log(level='info')
-    await ctx.started()
-    try:
-        async with ctx.open_stream() as stream:
-            try:
-                _input = Pair1(stream_key)
-                _input.connect()
-                log.info('connected!')
-                while True:
-                    msg = _input.recv()
-                    await stream.send(msg)
-            except BaseException as berr:
-                log.exception('i am stupid UY guy..')
-                raise berr
-    except BaseException as berr:
-        log.exception("we errored with")
-        raise berr
+class BlockReceiver:
 
+    def __init__(self, rchan):
+        self._rchan = rchan
 
-
-async def _final_streamer(send_chan, *args, task_status=trio.TASK_STATUS_IGNORED, **kwargs):
-    log = tractor.log.get_console_log(level='info')
-
-    root_key = f'{os.getpid()}-open_state_history'
-    result_key = root_key + '.result'
-
-    ship_reader_key = root_key + '.ship_reader'
-    result_decoder_key = root_key + '.result_decoder'
-
-    async with tractor.open_nursery(
-        loglevel='info',
-        debug_mode=True,
-    ) as an:
-        await an.run_in_actor(
-            ship_reader,
-            output_key=ship_reader_key,
-            **kwargs
-        )
-        await an.run_in_actor(
-            result_decoder,
-            stream_key=ship_reader_key,
-            output_key=result_decoder_key,
-        )
-        await an.run_in_actor(
-            stage_0_block_decoder,
-            stream_key=result_decoder_key,
-            output_key=result_key,
-        )
-
-        portal = await an.start_actor(
-            'sync_bridge', enable_modules=[__name__])
-
-        async with (
-            portal.open_context(
-                sync_bridge,
-                stream_key=result_key
-            ) as (ctx, _sent),
-            ctx.open_stream() as stream,
-            # send_chan,  # TRIO BUG MAYBE!?
-        ):
-            task_status.started(stream)
-            # add to be able to keep streaming
-            # await trio.sleep_forever()
-
-        log.error("BYE MISS LAURA")
+    async def __aiter__(self):
+        async for batch in self._rchan:
+            blocks = msgspec.msgpack.decode(batch)
+            for block in blocks:
+                yield block
 
 
 @acm
 async def open_state_history(
-    *args, **kwargs
+    endpoint: str,
+    sh_args: StateHistoryArgs,
+    decoders: int = 4,
+    debug_mode: bool = False
 ):
-    log = tractor.log.get_console_log()
-    send_c, recv_c = trio.open_memory_channel(0)
-    async def __real_final_streamer(stream):
-        try:
-            async with send_c:
-                async for msg in stream:
-                    reader = pa.ipc.RecordBatchStreamReader(pa.BufferReader(msg))
-                    result = reader.read_all()
-                    await send_c.send(result)
-        except BaseException as berr:
-            log.exception('real boi got cucked')
-            raise berr
+    sh_args = StateHistoryArgs.from_msg(sh_args)
+    root_key = f'{os.getpid()}-open_state_history'
 
-    async with (
-        trio.open_nursery() as n
+    ship_reader_key = root_key + '.ship_reader'
+    ws_session_key = root_key + '.ack'
+    result_key = root_key + '.result'
+    final_key = root_key + '.final'
+
+    common = {
+        'buf_size': sh_args.max_message_size
+    }
+
+    with (
+        ExitStack() as stack,
+        open_ringbuf(ship_reader_key, **common) as ship_token,
+        open_ringbuf(ws_session_key) as ws_token,
+        open_ringbuf(result_key, **common) as result_token,
+        open_ringbuf(final_key, **common) as final_token
     ):
-        stream = await n.start(partial(_final_streamer, send_c, *args, **kwargs))
-        n.start_soon(__real_final_streamer, stream)
-        yield recv_c
+        decoder_tokens = [
+            stack.enter_context(
+                tractor.ipc.open_ringbuf_pair(
+                    root_key + f'.decoder-{i}', buf_size=128 * 1024 * 1024
+                )
+            )
+            for i in range(decoders)
+        ]
+
+        decoder_in_fds, decoder_out_fds = (
+            tuple(fd for i, _ in decoder_tokens for fd in i.fds),
+            tuple(fd for _, o in decoder_tokens for fd in o.fds)
+        )
+
+        ship_proc_kwargs = {
+            'pass_fds': ship_token.fds + ws_token.fds
+        }
+
+        result_proc_kwargs = {
+            'pass_fds': ship_token.fds + result_token.fds + decoder_in_fds
+        }
+
+        decoders_proc_kwargs = {
+            'pass_fds': decoder_in_fds + decoder_out_fds
+        }
+
+        joiner_proc_kwargs = {
+            'pass_fds': final_token.fds + decoder_out_fds + ws_token.fds
+        }
+
+        send_chan, recv_chan = trio.open_memory_channel(0)
+
+        async with (
+            tractor.open_nursery(debug_mode=debug_mode) as an,
+        ):
+            ship_portal = await an.start_actor(
+                'ship_reader',
+                enable_modules=[__name__],
+                proc_kwargs=ship_proc_kwargs
+            )
+
+            result_decoder_portal = await an.start_actor(
+                'result_decoder',
+                enable_modules=[__name__],
+                proc_kwargs=result_proc_kwargs
+            )
+
+            dec_portals = []
+            for i in range(decoders):
+                dec_portals.append(await an.start_actor(
+                    f'decoder-{i}',
+                    enable_modules=[__name__],
+                    proc_kwargs=decoders_proc_kwargs
+                ))
+
+            joiner_portal = await an.start_actor(
+                'joiner',
+                enable_modules=[__name__],
+                proc_kwargs=joiner_proc_kwargs
+            )
+
+            async with (
+                ship_portal.open_context(
+                    ship_reader,
+                    out_token=ship_token,
+                    ws_token=ws_token,
+                    endpoint=endpoint,
+                    sh_args=sh_args
+                ) as (ship_ctx, _sent),
+
+                result_decoder_portal.open_context(
+                    result_decoder,
+                    in_token=ship_token,
+                    outputs=tuple((i for i, _ in decoder_tokens)),
+                ) as (result_ctx, _sent),
+
+                gather_contexts([
+                    dec_portals[i].open_context(
+                        generic_decoder,
+                        in_token=tokens[0],
+                        out_token=tokens[1],
+                    ) for i, tokens in enumerate(decoder_tokens)
+                ]) as _decoder_ctxs,
+
+                joiner_portal.open_context(
+                    block_joiner,
+                    inputs=tuple((o for _, o in decoder_tokens)),
+                    out_token=final_token,
+                    ws_token=ws_token,
+                    sh_args=sh_args
+                ) as (joiner_ctx, _sent),
+
+                attach_to_ringbuf_rchannel(final_token) as rchan
+            ):
+                yield BlockReceiver(rchan)
+                await an.cancel()
+
+            log.info('root exit')
 
