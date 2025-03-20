@@ -26,6 +26,7 @@ from tractor.trionics import gather_contexts
 from trio_websocket import open_websocket_url
 
 from leap.abis import STD_ABI
+from leap.ship.structs import StateHistoryArgs
 
 log = tractor.log.get_logger(__name__)
 
@@ -35,25 +36,19 @@ DELTAS_ARRAY_TYPE = 'table_delta[]'
 TRACES_ARRAY_TYPE = 'transaction_trace[]'
 
 
-class StateHistoryArgs(Struct, frozen=True):
-    start_block_num: int
-    end_block_num: int = (2 ** 32) - 2
-    max_messages_in_flight: int = 4000
-    max_message_size: int = 512 * 1024 * 1024
-    irreversible_only: bool = False
-    fetch_block: bool = True
-    fetch_traces: bool = True
-    fetch_deltas: bool = True
+class PerformanceOptions(Struct, frozen=True):
+    decoders: int = 4
+    debug_mode: bool = False
 
     def as_msg(self):
         return to_builtins(self)
 
     @classmethod
-    def from_msg(cls, msg: dict) -> StateHistoryArgs:
-        if isinstance(msg, StateHistoryArgs):
+    def from_msg(cls, msg: dict) -> PerformanceOptions:
+        if isinstance(msg, PerformanceOptions):
             return msg
 
-        return StateHistoryArgs(**msg)
+        return PerformanceOptions(**msg)
 
 
 class TaggedPayload(Struct, frozen=True):
@@ -291,11 +286,10 @@ async def ship_reader(
     ctx: tractor.Context,
     out_token: RBToken,
     ws_token: RBToken,
-    endpoint: str,
     sh_args: StateHistoryArgs
 ):
     sh_args = StateHistoryArgs.from_msg(sh_args)
-    log.info(f'connecting to ws {endpoint}...')
+    log.info(f'connecting to ws {sh_args.endpoint}...')
     antelope_rs.load_abi('std', STD_ABI)
 
     end_reached = trio.Event()
@@ -304,7 +298,7 @@ async def ship_reader(
         trio.open_nursery() as n,
         attach_to_ringbuf_schannel(out_token) as schan,
         open_websocket_url(
-            endpoint,
+            sh_args.endpoint,
             max_message_size=sh_args.max_message_size,
             message_queue_size=sh_args.max_messages_in_flight
         ) as ws
@@ -394,13 +388,10 @@ class BlockReceiver:
 
 
 @acm
-async def open_state_history(
-    endpoint: str,
-    sh_args: StateHistoryArgs,
-    decoders: int = 4,
-    debug_mode: bool = False
-):
+async def open_state_history(sh_args: StateHistoryArgs):
     sh_args = StateHistoryArgs.from_msg(sh_args)
+    pref_args = PerformanceOptions.from_msg(sh_args.backend_kwargs)
+
     root_key = f'{os.getpid()}-open_state_history'
 
     ship_reader_key = root_key + '.ship_reader'
@@ -425,7 +416,7 @@ async def open_state_history(
                     root_key + f'.decoder-{i}', buf_size=128 * 1024 * 1024
                 )
             )
-            for i in range(decoders)
+            for i in range(pref_args.decoders)
         ]
 
         decoder_in_fds, decoder_out_fds = (
@@ -449,10 +440,8 @@ async def open_state_history(
             'pass_fds': final_token.fds + decoder_out_fds + ws_token.fds
         }
 
-        send_chan, recv_chan = trio.open_memory_channel(0)
-
         async with (
-            tractor.open_nursery(debug_mode=debug_mode) as an,
+            tractor.open_nursery(debug_mode=pref_args.debug_mode) as an,
         ):
             ship_portal = await an.start_actor(
                 'ship_reader',
@@ -467,7 +456,7 @@ async def open_state_history(
             )
 
             dec_portals = []
-            for i in range(decoders):
+            for i in range(pref_args.decoders):
                 dec_portals.append(await an.start_actor(
                     f'decoder-{i}',
                     enable_modules=[__name__],
@@ -485,7 +474,6 @@ async def open_state_history(
                     ship_reader,
                     out_token=ship_token,
                     ws_token=ws_token,
-                    endpoint=endpoint,
                     sh_args=sh_args
                 ) as (ship_ctx, _sent),
 

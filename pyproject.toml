@@ -12,7 +12,19 @@ dependencies = [
     "pyo3-antelope-rs",
     "trio-websocket>=0.12.2",
     "websockets>=15.0.1",
-    "tractor",
+
+    # linux amd64
+    "tractor ; sys_platform == 'linux'",
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.4.0/pyo3_antelope_rs-0.4.0-cp39-abi3-manylinux_2_34_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+
+    # windows amd64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.4.0/pyo3_antelope_rs-0.4.0-cp39-abi3-win_amd64.whl ; sys_platform == 'win32' and platform_machine == 'x86_64'",
+
+    # macos amd64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.4.0/pyo3_antelope_rs-0.4.0-cp39-abi3-macosx_10_12_x86_64.whl ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+
+    # macos arm64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.4.0/pyo3_antelope_rs-0.4.0-cp39-abi3-macosx_11_0_arm64.whl ; sys_platform == 'darwin' and platform_machine == 'arm64'"
 ]
 
 [dependency-groups]
@@ -38,16 +50,24 @@ default-groups = [
     "dev",
     "snaps",
 ]
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32'  and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 
 [tool.uv.sources]
 tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "1bbf1f7ab574514586cbd25ae902eeb708f574c5" }
 # tractor = { path = "../tractor" }
 
-[tool.uv.sources.pyo3-antelope-rs]
-# url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.1/pyo3_antelope_rs-0.3.1-cp39-abi3-manylinux_2_34_x86_64.whl"
+# [tool.uv.sources.pyo3-antelope-rs]
 # git = "https://github.com/openrepublic/pyo3-antelope-rs.git"
 # rev = "8a0724b0504acdaf2af67e5e97e90a9411da26fa"
-path = "../pyo3-antelope-rs"
+# path = "../pyo3-antelope-rs"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 include = ["src/leap"]
@@ -64,3 +84,14 @@ build-backend = "hatchling.build"
 
 [project.entry-points."pytest11"]
 leap = "leap.fixtures"
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".ruff_cache",
+    ".venv",
+]
+
+line-length = 80
+indent-width = 4
+target-version = "py311"

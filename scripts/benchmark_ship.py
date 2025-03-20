@@ -15,9 +15,11 @@ async def _main():
     last_bucket_time = time.time()
 
     async with open_state_history(
-        ship_endpoint,
         sh_args={
+            'endpoint': ship_endpoint,
             'start_block_num': start_block_num,
+            'action_whitelist': {},
+            'delta_whitelist': {}
         }
     ) as block_chan:
         async for block in block_chan:

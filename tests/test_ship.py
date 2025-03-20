@@ -13,8 +13,8 @@ async def test_ship(cleos_bs):
 
     blocks = []
     async with open_state_history(
-        endpoint=cleos.ship_endpoint,
         sh_args={
+            'endpoint': cleos.ship_endpoint,
             'start_block_num': tx_block_num,
             'end_block_num': tx_block_num + 1,
         }
