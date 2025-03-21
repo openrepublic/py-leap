@@ -609,7 +609,7 @@ class CLEOS:
 
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: str) -> dict:
+    def get_abi(self, account_name: str, encode: bool = False) -> dict | bytes:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
         :param account_name: Account to get the ABI for
@@ -624,7 +624,12 @@ class CLEOS:
             }
         )
 
-        return resp['abi']
+        resp = resp['abi']
+
+        if encode:
+            resp = json.dumps(resp).encode('utf-8')
+
+        return resp
 
     def create_snapshot(self, body: dict):
         '''Create a snapshot, must have producer_plugin_api enabled

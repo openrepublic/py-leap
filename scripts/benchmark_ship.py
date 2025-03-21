@@ -1,13 +1,18 @@
 import time
-from cProfile import Profile
-from pstats import SortKey, Stats
 
 import trio
+
+from leap import CLEOS
 from leap.ship import open_state_history
 
 async def _main():
     start_block_num = 135764267
+    http_endpoint = 'https://testnet.telos.net'
     ship_endpoint = 'ws://127.0.0.1:29999'
+
+    cleos = CLEOS(endpoint=http_endpoint)
+
+    token_abi = cleos.get_abi('eosio.token', encode=True)
 
     buckets: list[int] = []
     current_bucket = 0
@@ -18,8 +23,11 @@ async def _main():
         sh_args={
             'endpoint': ship_endpoint,
             'start_block_num': start_block_num,
-            'action_whitelist': {},
-            'delta_whitelist': {}
+            'fetch_traces': True,
+            'fetch_deltas': True,
+            'start_contracts': {'eosio.token': token_abi},
+            'action_whitelist': {'eosio.token': '*'},
+            'delta_whitelist': {'eosio.token': '*'}
         }
     ) as block_chan:
         async for block in block_chan:
@@ -31,7 +39,7 @@ async def _main():
                 buckets.append(current_bucket)
                 current_bucket = 0
 
-                block_num = block['this_block']['block_num']
+                block_num = block.this_block.block_num
                 speed_avg = int(sum(buckets) / len(buckets))
                 print(f'[{block_num:,}] {speed_avg} b/s')
 
@@ -40,6 +48,9 @@ async def _main():
 
 
 if __name__ == '__main__':
+
+#    from cProfile import Profile
+#    from pstats import SortKey, Stats
 #    with Profile() as profile:
     try:
         trio.run(_main)
