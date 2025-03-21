@@ -1,3 +1,4 @@
+import sys
 import json
 import logging
 import subprocess
@@ -36,6 +37,9 @@ def maybe_get_marker(request, mark_name: str, field: str, default):
 
 @contextmanager
 def open_test_nodeos(request, tmp_path_factory):
+    if sys.platform != 'linux':
+        pytest.skip('Linux only')
+
     tmp_path = tmp_path_factory.getbasetemp() / request.node.name
     leap_path = tmp_path / 'leap'
     leap_path.mkdir(parents=True, exist_ok=True)
@@ -123,6 +127,9 @@ def open_test_nodeos(request, tmp_path_factory):
 
 @contextmanager
 def bootstrap_test_nodeos(request, tmp_path_factory):
+    if sys.platform != 'linux':
+        pytest.skip('Linux only')
+
     tmp_path = tmp_path_factory.getbasetemp() / request.node.name
     leap_path = tmp_path / 'leap'
     leap_path.mkdir(parents=True, exist_ok=True)

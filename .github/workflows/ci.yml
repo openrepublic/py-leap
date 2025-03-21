@@ -34,11 +34,5 @@ jobs:
       - name: Install
         run: uv sync
 
-      - name: Run simple tests
-        run: |
-          uv run pytest tests/test_libre_dex.py tests/test_sugar.py
-
-      - name: Run end to end tests
-        run: |
-          uv run pytest tests/test_token.py
-          uv run pytest tests/test_testcontract.py
+      - name: Run tests
+        run: uv run pytest
