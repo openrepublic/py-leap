@@ -28,7 +28,6 @@ from tractor.ipc import (
 from tractor.trionics import gather_contexts
 from trio_websocket import open_websocket_url
 
-from leap.abis import STD_ABI
 from leap.ship.structs import (
     StateHistoryArgs,
     GetBlocksResultV0,
@@ -267,8 +266,6 @@ async def result_decoder(
     Also send `block_header` so that it gets proxied to `block_joiner`.
 
     '''
-    antelope_rs.load_abi('std', STD_ABI)
-
     async with (
         gather_contexts([
             attach_to_ringbuf_schannel(token)
@@ -346,7 +343,6 @@ async def ship_reader(
 
     batch_size = min(read_range, pref_args.ws_batch_size)
     log.info(f'connecting to ws {sh_args.endpoint}...')
-    antelope_rs.load_abi('std', STD_ABI)
 
     end_reached = trio.Event()
 

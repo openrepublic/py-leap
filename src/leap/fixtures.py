@@ -11,7 +11,6 @@ import antelope_rs
 
 from docker.types import Mount
 
-from leap.abis import STD_EOSIO_ABI
 from leap.cleos import CLEOS
 from leap.sugar import (
     get_container,
@@ -77,11 +76,6 @@ def open_test_nodeos(request, tmp_path_factory):
         ship_endpoint=f'ws://127.0.0.1:{ship_port}',
         node_dir=leap_path
     )
-
-    # preload apis
-    rcleos = CLEOS('https://testnet.telos.net')
-    cleos.load_abi('eosio', STD_EOSIO_ABI)
-    cleos.load_abi('eosio.token', rcleos.get_abi('eosio.token'))
 
     # load keys
     ec, out = vtestnet.exec_run('cat /keys.json')

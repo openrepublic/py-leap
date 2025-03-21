@@ -1,19 +1,34 @@
-import os
+import json
+from pathlib import Path
 
-package_dir = os.path.dirname(__file__)
-
-std_abi_file_path = os.path.join(package_dir, 'std_abi.json')
-std_eosio_file_path = os.path.join(package_dir, 'eosio.json')
+import antelope_rs
 
 
-def load_std_eosio_abi() -> bytes:
-    with open(std_eosio_file_path, 'rb') as file:
+def _load_abi_file(p: Path) -> bytes:
+    with open(p, 'rb') as file:
         return file.read()
 
-def load_std_abi() -> bytes:
-    with open(std_abi_file_path, 'rb') as file:
-        return file.read()
+package_dir = Path(__file__).parent
 
 
-STD_ABI = load_std_abi()
-STD_EOSIO_ABI = load_std_eosio_abi()
+ABI_PATHS: dict[str, Path] = {
+    'std': package_dir / 'std_abi.json',
+    'eosio': package_dir / 'eosio.json',
+    'eosio.token': package_dir / 'eosio.token.json',
+}
+
+
+RAW_ABIS: dict[str, bytes] = {
+    account: _load_abi_file(abi_path)
+    for account, abi_path in ABI_PATHS.items()
+}
+
+
+for account, abi in RAW_ABIS.items():
+    antelope_rs.load_abi(account, abi)
+
+
+ABIS: dict[str, dict] = {
+    account: json.loads(abi_raw.decode('utf-8'))
+    for account, abi_raw in RAW_ABIS.items()
+}

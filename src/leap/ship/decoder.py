@@ -4,7 +4,6 @@ from base64 import b64decode
 import msgspec
 import antelope_rs
 
-from leap.abis import STD_ABI
 from leap.sugar import LeapJSONEncoder
 from leap.ship.structs import (
     OutputFormats,
@@ -27,7 +26,6 @@ class BlockDecoder:
         self.action_whitelist = Whitelist.from_msg(self.sh_args.action_whitelist)
         self.delta_whitelist = Whitelist.from_msg(self.sh_args.delta_whitelist)
 
-        antelope_rs.load_abi('std', STD_ABI)
         for account, abi in self._contracts.items():
             antelope_rs.load_abi(account, abi)
 

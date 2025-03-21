@@ -18,7 +18,7 @@ dependencies = [
     "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-manylinux_2_34_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
  
     # windows amd64
-    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-win_amd64.whl ; sys_platform == 'win32' and platform_machine == 'x86_64'",
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-win_amd64.whl ; sys_platform == 'win32' and platform_machine == 'AMD64'",
  
     # macos amd64
     "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-macosx_10_12_x86_64.whl ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
@@ -52,7 +52,7 @@ default-groups = [
 ]
 environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
-    "sys_platform == 'win32'  and platform_machine == 'x86_64'",
+    "sys_platform == 'win32'  and platform_machine == 'AMD64'",
     "sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]

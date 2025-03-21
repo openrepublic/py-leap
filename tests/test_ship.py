@@ -1,17 +1,40 @@
 import json
 
+import pytest
+
 from leap.ship import open_state_history
 from leap.sugar import LeapJSONEncoder
+from leap.ship.structs import OutputFormats
 
 
-async def test_ship(cleos_bs):
+@pytest.mark.parametrize(
+    'fetch_block,fetch_traces,fetch_deltas,start_contracts,action_whitelist,delta_whitelist,decode_meta,output_format',
+    [
+        (True, True, True, {}, None, None, True, OutputFormats.OPTIMIZED),
+
+        (True, True, True, {}, None, None, True, OutputFormats.STANDARD)
+    ],
+    ids=[
+        'general_case_optimized',
+        'general_case_standard'
+    ]
+)
+async def test_one_tx(
+    cleos_bs,
+    fetch_block: bool,
+    fetch_traces: bool,
+    fetch_deltas: bool,
+    start_contracts: dict,
+    action_whitelist: dict,
+    delta_whitelist: dict,
+    decode_meta: bool,
+    output_format: OutputFormats,
+):
     cleos = cleos_bs
 
     acc = cleos.new_account()
     receipt = cleos.transfer_token('eosio', acc, '10.0000 TLOS')
     tx_block_num = receipt['processed']['block_num']
-
-    token_abi = cleos.get_abi('eosio.token', encode=True)
 
     blocks = []
     async with open_state_history(
@@ -19,17 +42,14 @@ async def test_ship(cleos_bs):
             'endpoint': cleos.ship_endpoint,
             'start_block_num': tx_block_num,
             'end_block_num': tx_block_num + 1,
-            'fetch_traces': True,
-            'fetch_deltas': True,
-            'start_contracts': {
-                'eosio.token': token_abi
-            },
-            'action_whitelist': {
-                'eosio.token': ['transfer']
-            },
-            'delta_whitelist': {
-                'eosio.token': ['accounts']
-            },
+            'fetch_block': fetch_block,
+            'fetch_traces': fetch_traces,
+            'fetch_deltas': fetch_deltas,
+            'start_contracts': start_contracts,
+            'action_whitelist': action_whitelist,
+            'delta_whitelist': delta_whitelist,
+            'decode_meta': decode_meta,
+            'output_format': output_format
         }
     ) as rchan:
         async for block in rchan:
