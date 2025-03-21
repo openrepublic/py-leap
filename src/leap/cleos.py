@@ -566,8 +566,6 @@ class CLEOS:
         except FileNotFoundError as e:
             abs_path = Path().absolute()
             e.add_note(f'current path is {abs_path}')
-            for p in abs_path.rglob('*'):
-                e.add_note(str(p))
             raise e
 
 

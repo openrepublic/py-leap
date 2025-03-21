@@ -1,0 +1,95 @@
+{
+  "version": "eosio::abi/1.1",
+  "types": [],
+  "structs": [
+    {
+      "name": "MyData",
+      "base": "",
+      "fields": [
+        {
+          "name": "index",
+          "type": "uint64"
+        },
+        {
+          "name": "hash",
+          "type": "checksum256"
+        }
+      ]
+    },
+    {
+      "name": "cload",
+      "base": "",
+      "fields": [
+        {
+          "name": "hash",
+          "type": "checksum256"
+        }
+      ]
+    },
+    {
+      "name": "dump",
+      "base": "",
+      "fields": []
+    },
+    {
+      "name": "rload",
+      "base": "",
+      "fields": [
+        {
+          "name": "hash",
+          "type": "checksum256"
+        }
+      ]
+    },
+    {
+      "name": "store",
+      "base": "",
+      "fields": [
+        {
+          "name": "index",
+          "type": "uint64"
+        },
+        {
+          "name": "hash",
+          "type": "checksum256"
+        }
+      ]
+    }
+  ],
+  "actions": [
+    {
+      "name": "cload",
+      "type": "cload",
+      "ricardian_contract": ""
+    },
+    {
+      "name": "dump",
+      "type": "dump",
+      "ricardian_contract": ""
+    },
+    {
+      "name": "rload",
+      "type": "rload",
+      "ricardian_contract": ""
+    },
+    {
+      "name": "store",
+      "type": "store",
+      "ricardian_contract": ""
+    }
+  ],
+  "tables": [
+    {
+      "name": "mydata",
+      "type": "MyData",
+      "index_type": "i64",
+      "key_names": [],
+      "key_types": []
+    }
+  ],
+  "variants": [],
+  "abi_extensions": [],
+  "error_messages": [],
+  "ricardian_clauses": [],
+  "action_results": []
+}
