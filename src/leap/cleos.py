@@ -560,7 +560,16 @@ class CLEOS:
             contract_name = Path(contract_path).parts[-1]
 
         # will fail if not found
-        contract_path = Path(contract_path).resolve(strict=True)
+        try:
+            contract_path = Path(contract_path).resolve(strict=True)
+
+        except FileNotFoundError as e:
+            abs_path = Path().absolute()
+            e.add_note(f'current path is {abs_path}')
+            for p in abs_path.rglob('*'):
+                e.add_note(str(p))
+            raise e
+
 
         wasm = b''
         with open(contract_path / f'{contract_name}.wasm', 'rb') as wasm_file:
