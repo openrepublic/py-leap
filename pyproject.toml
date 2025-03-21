@@ -1,10 +1,11 @@
 [project]
 name = "py-leap"
-version = "0.1a36"
-description = ""
+version = "0.1a37"
+description = "Antelope protocol framework"
 authors = [{ name = "Guillermo Rodriguez", email = "guillermo@telos.net" }]
 requires-python = ">=3.11"
 readme = "README.md"
+license = "AGPL-3.0-or-later"
 dependencies = [
     "requests<2.32.0",
     "httpx>=0.28.1,<0.29",

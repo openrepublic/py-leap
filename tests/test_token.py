@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import pytest
 
 from leap.sugar import random_token_symbol
