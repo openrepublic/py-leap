@@ -1,16 +1,31 @@
 [project]
 name = "py-leap"
-version = "0.1a36"
-description = ""
+version = "0.1a37"
+description = "Antelope protocol framework"
 authors = [{ name = "Guillermo Rodriguez", email = "guillermo@telos.net" }]
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 readme = "README.md"
+license = "AGPL-3.0-or-later"
 dependencies = [
     "requests<2.32.0",
     "httpx>=0.28.1,<0.29",
     "msgspec>=0.19.0",
     "pyo3-antelope-rs",
     "trio-websocket>=0.12.2",
+    "websockets>=15.0.1",
+
+    # linux amd64
+    "tractor ; sys_platform == 'linux'",
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-manylinux_2_34_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+ 
+    # windows amd64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-win_amd64.whl ; sys_platform == 'win32' and platform_machine == 'AMD64'",
+ 
+    # macos amd64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-macosx_10_12_x86_64.whl ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+ 
+    # macos arm64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-macosx_11_0_arm64.whl ; sys_platform == 'darwin' and platform_machine == 'arm64'"
 ]
 
 [dependency-groups]
@@ -19,10 +34,9 @@ docs = [
     "sphinx-rtd-theme==1.3.0",
 ]
 dev = [
-    "pdbpp>=0.10.3,<0.11",
     "pytest>=8.3.4,<9",
     "docker>=6.1.3,<7",
-    "pytest-trio>=0.8.0,<0.9",
+    "greenback>=1.2.1",
 ]
 snaps = [
     "bs4>=0.0.2,<0.0.3",
@@ -36,12 +50,22 @@ default-groups = [
     "dev",
     "snaps",
 ]
+environments = [
+    "sys_platform == 'linux' and platform_machine == 'x86_64'",
+    "sys_platform == 'win32'  and platform_machine == 'AMD64'",
+    "sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    "sys_platform == 'darwin' and platform_machine == 'arm64'",
+]
 
-[tool.uv.sources.pyo3-antelope-rs]
-url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.3.1/pyo3_antelope_rs-0.3.1-cp39-abi3-manylinux_2_34_x86_64.whl"
-# git = "https://github.com/openrepublic/pyo3-antelope-rs.git"
-# rev = "8a0724b0504acdaf2af67e5e97e90a9411da26fa"
+[tool.uv.sources]
+tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "6e113d2150ac180b62768fbfbe0bb5a718212934" }
+# tractor = { path = "../tractor" }
+
+# [tool.uv.sources.pyo3-antelope-rs]
 # path = "../pyo3-antelope-rs"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.sdist]
 include = ["src/leap"]
@@ -58,3 +82,14 @@ build-backend = "hatchling.build"
 
 [project.entry-points."pytest11"]
 leap = "leap.fixtures"
+
+[tool.ruff]
+exclude = [
+    ".git",
+    ".ruff_cache",
+    ".venv",
+]
+
+line-length = 80
+indent-width = 4
+target-version = "py311"

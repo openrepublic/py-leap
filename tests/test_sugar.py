@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
+import tempfile
 
-from leap.protocol import Asset, Symbol
+from leap.protocol import Asset
 from leap.tokens import tlos_token
 
 from leap.sugar import download_snapshot
@@ -16,4 +16,4 @@ def test_zero_prec_asset():
     assert str(Asset(1, '0,SYS')) == '1 SYS'
 
 def test_snap_download():
-    download_snapshot('/tmp/', 1_000_000, progress=True)
+    download_snapshot(tempfile.gettempdir(), 1_000_000, progress=True)

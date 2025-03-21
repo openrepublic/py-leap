@@ -10,17 +10,17 @@ Requirements:
 
 
 - `git`
-- `python` >=3.9
+- `python` >=3.11
 - `uv` -> https://docs.astral.sh/uv/
 
 ```
 
-git clone https://github.com/guilledk/py-leap.git
+git clone https://github.com/openrepublic/py-leap.git
 
 cd py-leap
 
 # setup env
-uv venv --python 3.12
+uv venv --python 3.12  # >= 3.11
 
 # install deps
 uv sync

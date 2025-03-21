@@ -3,4 +3,6 @@
 **/*.egg-info
 **/__pycache__
 **/*.so*
-tests/contracts
+
+tests/contracts/eosio.*
+tests/contracts/telos.*

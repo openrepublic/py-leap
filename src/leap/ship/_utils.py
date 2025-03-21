@@ -13,37 +13,36 @@
 
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import json
-from pathlib import Path
-
-import antelope_rs
-
-
-def _load_abi_file(p: Path) -> bytes:
-    with open(p, 'rb') as file:
-        return file.read()
-
-package_dir = Path(__file__).parent
+from __future__ import annotations
+from msgspec import (
+    Struct,
+    to_builtins
+)
 
 
-ABI_PATHS: dict[str, Path] = {
-    'std': package_dir / 'std_abi.json',
-    'eosio': package_dir / 'eosio.json',
-    'eosio.token': package_dir / 'eosio.token.json',
-}
+class Whitelist(Struct, frozen=True):
 
+    inner: dict[str, list[str]] | None
 
-RAW_ABIS: dict[str, bytes] = {
-    account: _load_abi_file(abi_path)
-    for account, abi_path in ABI_PATHS.items()
-}
+    def as_msg(self):
+        return to_builtins(self.inner)
 
+    @classmethod
+    def from_msg(cls, msg: dict) -> Whitelist:
+        if isinstance(msg, Whitelist):
+            return msg
 
-for account, abi in RAW_ABIS.items():
-    antelope_rs.load_abi(account, abi)
+        return Whitelist(inner=msg)
 
+    def is_relevant(self, obj: any) -> bool:
+        if self.inner is None:
+            return True
 
-ABIS: dict[str, dict] = {
-    account: json.loads(abi_raw.decode('utf-8'))
-    for account, abi_raw in RAW_ABIS.items()
-}
+        first, second = obj.whitelist_keys()
+
+        relevant_items = self.inner.get(first, [])
+        return (
+            '*' in relevant_items
+            or
+            second in relevant_items
+        )

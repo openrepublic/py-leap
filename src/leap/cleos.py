@@ -1,5 +1,18 @@
-#!/usr/bin/env python3
+# py-leap: Antelope protocol framework
+# Copyright 2021-eternity Guillermo Rodriguez
 
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import json
 import time
 import base64
@@ -560,7 +573,14 @@ class CLEOS:
             contract_name = Path(contract_path).parts[-1]
 
         # will fail if not found
-        contract_path = Path(contract_path).resolve(strict=True)
+        try:
+            contract_path = Path(contract_path).resolve(strict=True)
+
+        except FileNotFoundError as e:
+            abs_path = Path().absolute()
+            e.add_note(f'current path is {abs_path}')
+            raise e
+
 
         wasm = b''
         with open(contract_path / f'{contract_name}.wasm', 'rb') as wasm_file:
@@ -609,7 +629,7 @@ class CLEOS:
 
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: str) -> dict:
+    def get_abi(self, account_name: str, encode: bool = False) -> dict | bytes:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
         :param account_name: Account to get the ABI for
@@ -624,7 +644,12 @@ class CLEOS:
             }
         )
 
-        return resp['abi']
+        resp = resp['abi']
+
+        if encode:
+            resp = json.dumps(resp).encode('utf-8')
+
+        return resp
 
     def create_snapshot(self, body: dict):
         '''Create a snapshot, must have producer_plugin_api enabled

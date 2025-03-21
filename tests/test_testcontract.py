@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
+import trio
 
 from leap.protocol import Asset, Symbol
 from leap.tokens import tlos_token
 
 
-async def test_asset(cleos_w_testcontract):
+def test_asset(cleos_w_testcontract):
     cleos = cleos_w_testcontract
     cleos.push_action(
         'testcontract',
@@ -43,7 +43,8 @@ async def test_asset(cleos_w_testcontract):
 
     cleos.wait_blocks(2)
 
-    await cleos.a_push_action(
+    trio.run(
+        cleos.a_push_action,
         'testcontract',
         'checkasset',
         ['1000.0000 TLOS', 1000 * (10 ** 4)],

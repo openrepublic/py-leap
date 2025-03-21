@@ -5,7 +5,14 @@ on: [push]
 jobs:
   auto-tests:
     name: Pytest Tests
-    runs-on: ubuntu-24.04
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      matrix:
+        platform:
+          - ubuntu-24.04
+          - macos-latest
+          - windows-latest
+
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
@@ -21,20 +28,11 @@ jobs:
           path: ./.venv
           key: venv-${{ hashFiles('uv.lock') }}
 
-      - name: Install with dev
+      - name: Setup env
+        run: uv venv .venv --python=3.11
+
+      - name: Install
         run: uv sync
 
-      - name: Run simple tests
-        run: |
-          uv run \
-            pytest \
-              tests/test_libre_dex.py \
-              tests/test_sugar.py
-
-      - name: Run end to end tests
-        run: |
-          uv run \
-            pytest tests/test_token.py
-
-          uv run \
-            pytest tests/test_testcontract.py
+      - name: Run tests
+        run: uv run pytest

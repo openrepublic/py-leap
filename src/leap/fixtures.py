@@ -1,3 +1,19 @@
+# py-leap: Antelope protocol framework
+# Copyright 2021-eternity Guillermo Rodriguez
+
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU Affero General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU Affero General Public License for more details.
+
+# You should have received a copy of the GNU Affero General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+import sys
 import json
 import logging
 import subprocess
@@ -11,7 +27,6 @@ import antelope_rs
 
 from docker.types import Mount
 
-from leap.abis import STD_EOSIO_ABI
 from leap.cleos import CLEOS
 from leap.sugar import (
     get_container,
@@ -37,6 +52,9 @@ def maybe_get_marker(request, mark_name: str, field: str, default):
 
 @contextmanager
 def open_test_nodeos(request, tmp_path_factory):
+    if sys.platform != 'linux':
+        pytest.skip('Linux only')
+
     tmp_path = tmp_path_factory.getbasetemp() / request.node.name
     leap_path = tmp_path / 'leap'
     leap_path.mkdir(parents=True, exist_ok=True)
@@ -77,11 +95,6 @@ def open_test_nodeos(request, tmp_path_factory):
         ship_endpoint=f'ws://127.0.0.1:{ship_port}',
         node_dir=leap_path
     )
-
-    # preload apis
-    rcleos = CLEOS('https://testnet.telos.net')
-    cleos.load_abi('eosio', STD_EOSIO_ABI)
-    cleos.load_abi('eosio.token', rcleos.get_abi('eosio.token'))
 
     # load keys
     ec, out = vtestnet.exec_run('cat /keys.json')
@@ -129,6 +142,9 @@ def open_test_nodeos(request, tmp_path_factory):
 
 @contextmanager
 def bootstrap_test_nodeos(request, tmp_path_factory):
+    if sys.platform != 'linux':
+        pytest.skip('Linux only')
+
     tmp_path = tmp_path_factory.getbasetemp() / request.node.name
     leap_path = tmp_path / 'leap'
     leap_path.mkdir(parents=True, exist_ok=True)

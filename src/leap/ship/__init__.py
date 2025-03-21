@@ -13,37 +13,20 @@
 
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import json
-from pathlib import Path
-
-import antelope_rs
+import os
+import platform
 
 
-def _load_abi_file(p: Path) -> bytes:
-    with open(p, 'rb') as file:
-        return file.read()
-
-package_dir = Path(__file__).parent
+_SHIP_BACKEND = os.environ.get('SHIP_BACKEND', 'default')
 
 
-ABI_PATHS: dict[str, Path] = {
-    'std': package_dir / 'std_abi.json',
-    'eosio': package_dir / 'eosio.json',
-    'eosio.token': package_dir / 'eosio.token.json',
-}
+match platform.system():
+    case 'Linux' if _SHIP_BACKEND != 'generic':
+        from leap.ship._linux import (
+            open_state_history as open_state_history
+        )
 
-
-RAW_ABIS: dict[str, bytes] = {
-    account: _load_abi_file(abi_path)
-    for account, abi_path in ABI_PATHS.items()
-}
-
-
-for account, abi in RAW_ABIS.items():
-    antelope_rs.load_abi(account, abi)
-
-
-ABIS: dict[str, dict] = {
-    account: json.loads(abi_raw.decode('utf-8'))
-    for account, abi_raw in RAW_ABIS.items()
-}
+    case _:
+        from leap.ship._generic import (
+            open_state_history as open_state_history
+        )

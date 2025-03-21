@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-
 import pytest
 
 from leap.sugar import random_token_symbol
@@ -74,7 +72,7 @@ def test_create_max_possible_plus_one(cleos_bs):
     with pytest.raises(ValueError) as err:
         cleos.create_token(creator, max_supply, retries=1)
 
-    assert 'asset amount must be less than 2^62' in repr(err.value)
+    assert 'from String error: asset' in repr(err.value)
 
 def test_create_max_decimals(cleos_bs):
     cleos = cleos_bs
@@ -298,7 +296,7 @@ def test_open(cleos_bs):
     with pytest.raises(ValueError) as err:
         cleos.open_token(tester, '0,INVALID', creator, retries=1)
 
-    assert 'invalid symbol character' in repr(err.value)
+    assert '0,INVALID from String error: symbol' in repr(err.value)
 
     with pytest.raises(TransactionPushError) as err:
         cleos.open_token(tester, f'1,{sym}', creator, retries=1)
