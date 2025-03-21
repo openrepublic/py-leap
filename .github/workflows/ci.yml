@@ -10,7 +10,7 @@ jobs:
       matrix:
         platform:
           - ubuntu-24.04
-          # - macos-latest
+          - macos-latest
           - windows-latest
 
     timeout-minutes: 10
@@ -28,7 +28,10 @@ jobs:
           path: ./.venv
           key: venv-${{ hashFiles('uv.lock') }}
 
-      - name: Install with dev
+      - name: Setup env
+        run: uv venv .venv --python=3.11
+
+      - name: Install
         run: uv sync
 
       - name: Run simple tests
