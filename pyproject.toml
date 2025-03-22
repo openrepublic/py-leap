@@ -1,6 +1,6 @@
 [project]
 name = "py-leap"
-version = "0.1a37"
+version = "0.1a38"
 description = "Antelope protocol framework"
 authors = [{ name = "Guillermo Rodriguez", email = "guillermo@telos.net" }]
 requires-python = ">=3.11"
@@ -58,7 +58,7 @@ environments = [
 ]
 
 [tool.uv.sources]
-tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "6e113d2150ac180b62768fbfbe0bb5a718212934" }
+tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "32b5210648d2c421ec384ed70cc17c5b7017d64c" }
 # tractor = { path = "../tractor" }
 
 # [tool.uv.sources.pyo3-antelope-rs]
