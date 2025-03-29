@@ -24,8 +24,8 @@ from leap.ship.structs import (
     OutputFormats,
     StateHistoryArgs,
     Action,
-    AccountRow,
-    ContractRow
+    AccountV0,
+    RawContractRowV0
 )
 from leap.ship._utils import Whitelist
 
@@ -36,10 +36,10 @@ class BlockDecoder:
         self,
         sh_args: StateHistoryArgs
     ):
-        self.sh_args = StateHistoryArgs.from_msg(sh_args)
+        self.sh_args = StateHistoryArgs.from_dict(sh_args)
         self._contracts = self.sh_args.start_contracts
-        self.action_whitelist = Whitelist.from_msg(self.sh_args.action_whitelist)
-        self.delta_whitelist = Whitelist.from_msg(self.sh_args.delta_whitelist)
+        self.action_whitelist = Whitelist.from_dict(self.sh_args.action_whitelist)
+        self.delta_whitelist = Whitelist.from_dict(self.sh_args.delta_whitelist)
 
         for account, abi in self._contracts.items():
             antelope_rs.load_abi(account, abi)
@@ -57,11 +57,11 @@ class BlockDecoder:
             'transaction_trace[]',
             raw
         )
-        traces: list[tuple[str, dict]] = msgspec.msgpack.decode(msgpack_traces)
+        traces: list[dict] = msgspec.msgpack.decode(msgpack_traces)
         ret = []
 
-        for _type, trace in traces:
-            for act_type, act_trace in trace['action_traces']:
+        for trace in traces:
+            for act_trace in trace['action_traces']:
                 action = msgspec.convert(act_trace['act'], type=Action)
 
                 if not self.action_whitelist.is_relevant(action):
@@ -97,7 +97,7 @@ class BlockDecoder:
             'table_delta[]',
             raw
         )
-        deltas: list[tuple[str, dict]] = msgspec.msgpack.decode(msgpack_deltas)
+        deltas: list[dict] = msgspec.msgpack.decode(msgpack_deltas)
         ret = {}
 
         def ret_add_delta(name: str, row: dict):
@@ -106,7 +106,7 @@ class BlockDecoder:
 
             ret[name].append(row)
 
-        for delta_type, delta in deltas:
+        for delta in deltas:
             rows = delta['rows']
             name = delta['name']
 
@@ -116,29 +116,30 @@ class BlockDecoder:
                         if not row['present'] or not self.sh_args.decode_abis:
                             continue
 
-                        account_row = AccountRow.from_b64(row['data'])
+                        try:
+                            account_row = AccountV0.from_b64(row['data'])
+                            row['data'] = account_row
+
+                        except* Exception as e:
+                            e.add_note(f'while decoding account row {row}')
+                            raise e
 
                         if account_row.name not in self._contracts:
                             continue
 
-                        row_data = row['data']
                         if len(account_row.abi) > 0:
-                            abi = antelope_rs.abi_unpack('std', 'abi', (account_row.abi))
+                            abi = antelope_rs.abi_unpack('std', 'abi', account_row.abi)
                             antelope_rs.load_abi(
                                 account_row.name,
                                 json.dumps(abi, cls=LeapJSONEncoder).encode('utf-8')
                             )
-                            row_data = abi
-
-                        row['data'] = row_data
-
 
                     case 'contract_row':
-                        contract_row = ContractRow.from_b64(row['data'])
+                        contract_row = RawContractRowV0.from_b64(row['data'])
 
                         if not self.delta_whitelist.is_relevant(contract_row):
                             if self.sh_args.output_format == OutputFormats.STANDARD:
-                                row['data'] = contract_row.as_dict()
+                                row['data'] = contract_row.to_dict()
 
                             continue
 
@@ -164,7 +165,7 @@ class BlockDecoder:
                             continue
 
                         try:
-                            _dtype, table_meta = antelope_rs.abi_unpack(
+                            table_meta = antelope_rs.abi_unpack(
                                 'std',
                                 name,
                                 b64decode(row['data'])

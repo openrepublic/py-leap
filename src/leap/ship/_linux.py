@@ -15,6 +15,8 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from __future__ import annotations
 import os
+import time
+import json
 from typing import (
     AsyncContextManager
 )
@@ -35,7 +37,6 @@ from msgspec import (
 from tractor.ipc import (
     RBToken,
     open_ringbuf,
-    RingBuffBytesReceiver,
     attach_to_ringbuf_schannel,
     attach_to_ringbuf_rchannel,
     attach_to_ringbuf_channel,
@@ -43,13 +44,18 @@ from tractor.ipc import (
 from tractor.trionics import gather_contexts
 from trio_websocket import open_websocket_url
 
+from leap.sugar import LeapJSONEncoder
 from leap.ship.structs import (
     StateHistoryArgs,
+    GetStatusRequestV0,
+    GetBlocksRequestV0,
+    GetBlocksAckRequestV0,
     GetBlocksResultV0,
     Block,
     BlockHeader,
 )
 from leap.ship.decoder import BlockDecoder
+from leap.ship._benchmark import BenchmarkedBlockReceiver
 
 log = tractor.log.get_logger(__name__)
 
@@ -60,8 +66,10 @@ TRACES_ARRAY_TYPE = 'transaction_trace[]'
 
 
 class PerformanceOptions(Struct, frozen=True):
-    decoders: int = 8
-    max_msgs_per_buf: float = 2.0
+    decoders: int = 2
+    decoder_buf_size: int = 128 * 1024 * 1024
+    ack_buf_size: int = 512
+    max_msgs_per_buf: float = 20.0
     ws_batch_size: int = 1000
 
     debug_mode: bool = False
@@ -70,7 +78,7 @@ class PerformanceOptions(Struct, frozen=True):
         return to_builtins(self)
 
     @classmethod
-    def from_msg(cls, msg: dict) -> PerformanceOptions:
+    def from_dict(cls, msg: dict) -> PerformanceOptions:
         if isinstance(msg, PerformanceOptions):
             return msg
 
@@ -80,21 +88,28 @@ class PerformanceOptions(Struct, frozen=True):
 class TaggedPayload(Struct, frozen=True):
     index: int
     abi_type: str
-    data: bytes
+    data_format: str
+    data: msgspec.Raw
 
     def encode(self) -> bytes:
         return msgspec.msgpack.encode(self)
+
+    def decode_data(self) -> bytes:
+        return msgspec.msgpack.decode(self.data, type=bytes)
 
     def decode_antelope(self) -> bytes:
         return antelope_rs.abi_unpack_msgspec(
             'std',
             self.abi_type,
-            self.data
+            self.decode_data()
         )
 
     def decode(self, type=None) -> any:
         res = msgspec.msgpack.decode(
             self.decode_antelope()
+            if self.data_format == 'antelope'
+            else
+            self.decode_data()
         )
         if type:
             res = msgspec.convert(res, type=type)
@@ -127,7 +142,7 @@ async def block_joiner(
     ack_token: RBToken,
     sh_args: StateHistoryArgs
 ):
-    sh_args = StateHistoryArgs.from_msg(sh_args)
+    sh_args = StateHistoryArgs.from_dict(sh_args)
     unacked_msgs = 0
     next_index = 0
 
@@ -184,7 +199,11 @@ async def block_joiner(
 
             # maybe signal ws ack
             unacked_msgs += len(block_batch)
-            if unacked_msgs >= sh_args.max_messages_in_flight:
+            if (
+                unacked_msgs >= sh_args.max_messages_in_flight
+                or
+                sh_args.end_block_num - last_block_num <= sh_args.max_messages_in_flight
+            ):
                 await ack_chan.send(msgspec.msgpack.encode(AckMessage(
                     last_block_num=last_block_num
                 )))
@@ -201,7 +220,7 @@ async def block_joiner(
                         block = {}
                         wip_block_map[payload.index] = block
 
-                    decoded_msg = msgspec.msgpack.decode(payload.data)
+                    decoded_msg = payload.decode()
 
                     if payload.abi_type == 'block_header':
                         block.update(decoded_msg)
@@ -230,7 +249,7 @@ async def generic_decoder(
     out_token: RBToken,
     sh_args: StateHistoryArgs
 ):
-    sh_args = StateHistoryArgs.from_msg(sh_args)
+    sh_args = StateHistoryArgs.from_dict(sh_args)
     decoder = BlockDecoder(sh_args)
 
     async with attach_to_ringbuf_channel(in_token, out_token) as chan:
@@ -245,10 +264,10 @@ async def generic_decoder(
                     continue
 
                 case 'transaction_trace[]' if sh_args.fetch_traces:
-                    result = decoder.decode_traces(payload.data)
+                    result = decoder.decode_traces(payload.decode_data())
 
                 case 'table_delta[]' if sh_args.fetch_deltas:
-                    result = decoder.decode_deltas(payload.data)
+                    result = decoder.decode_deltas(payload.decode_data())
 
                 case _:
                     result = payload.decode_antelope()
@@ -257,6 +276,7 @@ async def generic_decoder(
                 TaggedPayload(
                     index=payload.index,
                     abi_type=payload.abi_type,
+                    data_format='msgpack',
                     data=result
                 ).encode()
             )
@@ -293,6 +313,7 @@ async def result_decoder(
         async def send(
             index: int,
             abi_type: str,
+            data_format: str,
             data: bytes
         ):
             '''
@@ -304,6 +325,7 @@ async def result_decoder(
                 TaggedPayload(
                     index=index,
                     abi_type=abi_type,
+                    data_format=data_format,
                     data=data
                 ).encode()
             )
@@ -322,12 +344,14 @@ async def result_decoder(
                     await send(
                         payload.index,
                         abi_type,
+                        'antelope',
                         getattr(result, res_attr)
                     )
 
             await send(
                 payload.index,
                 'block_header',
+                'msgpack',
                 msgspec.msgpack.encode(BlockHeader.from_block(result))
             )
 
@@ -349,8 +373,8 @@ async def ship_reader(
     expect only `ACK_MSG`, in case of EOF this means `block_joiner` as reached
     the configured `sh_args.end_block_num` and we must stop.
     '''
-    sh_args = StateHistoryArgs.from_msg(sh_args)
-    pref_args = PerformanceOptions.from_msg(
+    sh_args = StateHistoryArgs.from_dict(sh_args)
+    pref_args = PerformanceOptions.from_dict(
         sh_args.backend_kwargs
     )
 
@@ -377,7 +401,13 @@ async def ship_reader(
         log.info('got abi')
 
         # send get_status_request
-        await ws.send_message(antelope_rs.abi_pack('std', 'request', ['get_status_request_v0', {}]))
+        await ws.send_message(
+            antelope_rs.abi_pack(
+                'std',
+                'request',
+                GetStatusRequestV0().to_dict()
+            )
+        )
 
         # receive get_status_result
         status_result_bytes = await ws.get_message()
@@ -387,19 +417,16 @@ async def ship_reader(
         get_blocks_msg = antelope_rs.abi_pack(
             'std',
             'request',
-            [
-                'get_blocks_request_v0',
-                {
-                    'start_block_num': sh_args.start_block_num,
-                    'end_block_num': sh_args.end_block_num,
-                    'max_messages_in_flight': sh_args.max_messages_in_flight,
-                    'have_positions': [],
-                    'irreversible_only': sh_args.irreversible_only,
-                    'fetch_block': sh_args.fetch_block,
-                    'fetch_traces': sh_args.fetch_traces,
-                    'fetch_deltas': sh_args.fetch_deltas
-                }
-            ]
+            GetBlocksRequestV0(
+                start_block_num=sh_args.start_block_num,
+                end_block_num=sh_args.end_block_num,
+                max_messages_in_flight=sh_args.max_messages_in_flight,
+                have_positions=[],
+                irreversible_only=sh_args.irreversible_only,
+                fetch_block=sh_args.fetch_block,
+                fetch_traces=sh_args.fetch_traces,
+                fetch_deltas=sh_args.fetch_deltas
+            ).to_dict()
         )
         await ws.send_message(get_blocks_msg)
 
@@ -422,10 +449,9 @@ async def ship_reader(
                         antelope_rs.abi_pack(
                             'std',
                             'request',
-                            [
-                                'get_blocks_ack_request_v0',
-                                {'num_messages': sh_args.max_messages_in_flight}
-                            ]
+                            GetBlocksAckRequestV0(
+                                num_messages=sh_args.max_messages_in_flight
+                            ).to_dict()
                         )
                     )
 
@@ -441,7 +467,10 @@ async def ship_reader(
                 msg = await ws.get_message()
 
                 payload = TaggedPayload(
-                    index=msg_index, abi_type='get_blocks_result_v0', data=msg[1:]
+                    index=msg_index,
+                    abi_type='get_blocks_result_v0',
+                    data_format='antelope',
+                    data=msg[1:]
                 )
 
                 await schan.send(payload.encode())
@@ -457,28 +486,40 @@ async def ship_reader(
     log.info('ship_reader exit')
 
 
-class BlockReceiver(trio.abc.ReceiveChannel[Block]):
+class BlockReceiver(BenchmarkedBlockReceiver):
     '''
     Decode a stream of msgspack encoded `Block` structs
 
     '''
-    def __init__(self, rchan: RingBuffBytesReceiver):
-        self._rchan = rchan
-        self._aiter = self._iterator()
 
     async def _iterator(self):
         async for batch in self._rchan:
-            blocks = msgspec.msgpack.decode(
-                batch, type=list[Block]
-            )
-            for block in blocks:
-                yield block
+            blocks = msgspec.msgpack.decode(batch)
+            self._maybe_benchmark(len(blocks))
 
-    async def receive(self):
-        return await self._aiter.asend(None)
+            if self._args.output_convert:
+                try:
+                    blocks = msgspec.convert(blocks, type=list[Block])
 
-    async def aclose(self):
-        await self._rchan.aclose()
+                except msgspec.ValidationError as e:
+                    try:
+                        e.add_note(
+                            'Msgspec error while decoding batch:\n' +
+                            json.dumps(blocks, indent=4, cls=LeapJSONEncoder)
+                        )
+
+                    except Exception as inner_e:
+                        inner_e.add_note('could not decode without type either!')
+                        raise inner_e from e
+
+                    raise e
+
+            if self._args.output_batched:
+                yield blocks
+
+            else:
+                for block in blocks:
+                    yield block
 
 
 @acm
@@ -512,16 +553,24 @@ async def open_state_history(
                     through ack ring.
 
     '''
-    sh_args = StateHistoryArgs.from_msg(sh_args)
-    pref_args = PerformanceOptions.from_msg(
+    sh_args = StateHistoryArgs.from_dict(sh_args)
+    pref_args = PerformanceOptions.from_dict(
         sh_args.backend_kwargs
     )
 
     root_key = f'{os.getpid()}-open_state_history'
 
+    large_buf_size = int(sh_args.max_message_size * pref_args.max_msgs_per_buf)
     common = {
-        'buf_size': int(sh_args.max_message_size * pref_args.max_msgs_per_buf)
+        'buf_size': large_buf_size
     }
+
+    max_mem_usage = int(
+        large_buf_size * 2 +
+        pref_args.decoder_buf_size * pref_args.decoders +
+        pref_args.ack_buf_size
+    )
+    log.info(f'max_mem_usage: {max_mem_usage:,} bytes')
 
     # create ring buffers
     with (
@@ -534,7 +583,7 @@ async def open_state_history(
         decoder_tokens = [
             stack.enter_context(
                 tractor.ipc.open_ringbuf_pair(
-                    root_key + f'.decoder-{i}', buf_size=128 * 1024 * 1024
+                    root_key + f'.decoder-{i}', buf_size=pref_args.decoder_buf_size
                 )
             )
             for i in range(pref_args.decoders)
@@ -611,7 +660,7 @@ async def open_state_history(
                         out_token=tokens[1],
                         sh_args=sh_args
                     ) for i, tokens in enumerate(decoder_tokens)
-                ]) as _decoder_ctxs,
+                ]) as decoder_ctxs,
 
                 joiner_portal.open_context(
                     block_joiner,
@@ -624,7 +673,9 @@ async def open_state_history(
                 # finally attach root to final block channel
                 attach_to_ringbuf_rchannel(final_token) as rchan
             ):
-                yield BlockReceiver(rchan)
+                yield BlockReceiver(rchan, sh_args)
+                for dctx, _sent in decoder_ctxs:
+                    await dctx.cancel()
                 await joiner_ctx.cancel()
                 await an.cancel()
 

@@ -1,23 +1,38 @@
 import json
+import platform
 
 import trio
 import pytest
 
-from leap.ship import open_state_history
+from leap.ship import (
+    open_state_history
+)
 from leap.sugar import LeapJSONEncoder
 from leap.ship.structs import OutputFormats
 
 
 @pytest.mark.parametrize(
-    'fetch_block,fetch_traces,fetch_deltas,start_contracts,action_whitelist,delta_whitelist,decode_meta,output_format',
+    'fetch_block,fetch_traces,fetch_deltas,start_contracts,action_whitelist,delta_whitelist,decode_meta,output_format,backend',
     [
-        (True, True, True, {}, None, None, True, OutputFormats.OPTIMIZED),
+        (False, False, False, {}, None, None, False, OutputFormats.OPTIMIZED, 'generic'),
 
-        (True, True, True, {}, None, None, True, OutputFormats.STANDARD)
+        (True, True, True, {}, None, None, True, OutputFormats.OPTIMIZED, 'generic'),
+
+        (True, True, True, {}, None, None, True, OutputFormats.STANDARD, 'generic'),
+
+        (False, False, False, {}, None, None, False, OutputFormats.OPTIMIZED, 'linux'),
+
+        (True, True, True, {}, None, None, True, OutputFormats.OPTIMIZED, 'linux'),
+
+        (True, True, True, {}, None, None, True, OutputFormats.STANDARD, 'linux'),
     ],
     ids=[
-        'general_case_optimized',
-        'general_case_standard'
+        'generic_headers',
+        'generic_opt',
+        'generic_std',
+        'linux_headers',
+        'linux_opt',
+        'linux_std'
     ]
 )
 def test_one_tx(
@@ -30,7 +45,11 @@ def test_one_tx(
     delta_whitelist: dict,
     decode_meta: bool,
     output_format: OutputFormats,
+    backend: str
 ):
+    if platform.system() != 'Linux' and backend != 'generic':
+        pytest.skip('Linux only')
+
     cleos = cleos_bs
 
     acc = cleos.new_account()
@@ -51,11 +70,20 @@ def test_one_tx(
                 'action_whitelist': action_whitelist,
                 'delta_whitelist': delta_whitelist,
                 'decode_meta': decode_meta,
-                'output_format': output_format
+                'output_format': output_format,
+                'backend': backend,
+                'backend_kwargs': {
+                    # 'debug_mode': True
+                }
             }
         ) as rchan:
             async for block in rchan:
-                print(json.dumps(block.as_dict(), indent=4, cls=LeapJSONEncoder))
+                # breakpoint()
+                print(json.dumps(
+                    block.to_dict(),
+                    indent=4,
+                    cls=LeapJSONEncoder
+                ))
                 blocks.append(block)
 
     trio.run(main)

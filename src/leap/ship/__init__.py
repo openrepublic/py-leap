@@ -15,18 +15,52 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import platform
+from typing import AsyncContextManager
+from contextlib import asynccontextmanager as acm
 
+from leap.ship.structs import StateHistoryArgs
 
-_SHIP_BACKEND = os.environ.get('SHIP_BACKEND', 'default')
-
+from leap.ship._generic import (
+    open_state_history as _generic_open_state_history
+)
 
 match platform.system():
-    case 'Linux' if _SHIP_BACKEND != 'generic':
+    case 'Linux':
         from leap.ship._linux import (
-            open_state_history as open_state_history
+            open_state_history as _linux_open_state_history
         )
 
-    case _:
-        from leap.ship._generic import (
-            open_state_history as open_state_history
-        )
+
+_backend = os.environ.get('SHIP_BACKEND', 'default')
+
+
+def set_ship_backend(backend: str):
+    global _backend
+    _backend = backend
+
+
+def get_ship_backend() -> str:
+    return _backend
+
+
+def get_ship_provider() -> AsyncContextManager:
+    match (platform.system(), get_ship_backend()):
+        case ('Linux', 'linux' | 'default'):
+            return _linux_open_state_history
+
+        case _:
+            return _generic_open_state_history
+
+
+@acm
+async def open_state_history(sh_args: StateHistoryArgs):
+
+    sh_args = StateHistoryArgs.from_dict(sh_args)
+
+    if sh_args.backend:
+        set_ship_backend(sh_args.backend)
+
+    async with (
+        get_ship_provider()(sh_args)
+    ) as provider:
+        yield provider

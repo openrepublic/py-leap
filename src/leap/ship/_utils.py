@@ -24,11 +24,11 @@ class Whitelist(Struct, frozen=True):
 
     inner: dict[str, list[str]] | None
 
-    def as_msg(self):
+    def to_dict(self):
         return to_builtins(self.inner)
 
     @classmethod
-    def from_msg(cls, msg: dict) -> Whitelist:
+    def from_dict(cls, msg: dict) -> Whitelist:
         if isinstance(msg, Whitelist):
             return msg
 
