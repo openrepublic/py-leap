@@ -73,7 +73,8 @@ def test_one_tx(
                 'output_format': output_format,
                 'backend': backend,
                 'backend_kwargs': {
-                    # 'debug_mode': True
+                    'res_monitor': False,
+                    'debug_mode': True
                 }
             }
         ) as rchan:

@@ -16,14 +16,14 @@ CPU: AMD Ryzen 9 6900HX with Radeon Graphics (16) @ 4.936GHz
 GPU: AMD ATI Radeon 680M
 Memory: 27798MiB
 
-average speed on these settings: 6.6k
+average speed on these settings: 6.8k
 '''
 
 
 async def _main():
     _log = get_console_log(level='info')
     start_block_num = 135_764_267
-    end_block_num = 136_000_000
+    end_block_num = start_block_num + 1_000_000
     http_endpoint = 'https://testnet.telos.net'
     ship_endpoint = 'ws://127.0.0.1:29999'
 
@@ -45,14 +45,21 @@ async def _main():
             'delta_whitelist': {'eosio.token': ['*']},
             'output_batched': True,
             'output_format': OutputFormats.OPTIMIZED,
-            'output_convert': True,
+            'output_convert': False,
             'max_message_size': 10 * 1024 * 1024,
-            'max_messages_in_flight': 25000,
+            'max_messages_in_flight': 10_000,
             'benchmark': True,
             'backend_kwargs': {
-                'decoders': 4,
-                'max_msgs_per_buf': 200,
-                'ws_batch_size': 250
+                'buf_size': 512 * 1024 * 1024,  # 512mb
+                'ws_batch_size': 500,
+                'stage_0_batch_size': 800,
+                'stage_1_batch_size': 400,
+                'final_batch_size': 10,
+                'decoders': 3,
+                'stage_ratio': 3.0,
+                'res_monitor': True,
+                'res_monitor_max_batch_size': 2000,
+                'debug_mode': False
             }
         }
     )
@@ -60,19 +67,30 @@ async def _main():
     async with open_state_history(
         sh_args=sh_args
     ) as block_chan:
-        async for batch in block_chan:
-            block = batch[-1]
-            now = time.time()
+        try:
+            avg_time = int(
+                sh_args.benchmark_sample_time * sh_args.benchmark_max_samples
+            )
+            async for batch in block_chan:
+                block = batch[-1]
+                now = time.time()
+                if now - last_speed_log_time >= sh_args.benchmark_sample_time:
+                    last_speed_log_time = now
 
-            if now - last_speed_log_time > 1.0:
-                last_speed_log_time = now
+                    if sh_args.output_convert:
+                        block_num = block.this_block.block_num
+                    else:
+                        block_num = block['this_block']['block_num']
 
-                if sh_args.output_convert:
-                    block_num = block.this_block.block_num
-                else:
-                    block_num = block['this_block']['block_num']
+                    print(
+                        f'[{block_num:,}] '
+                        f'{block_chan.average_sample_delta:,.2f} sec avg sample delta, '
+                        f'{block_chan.average_speed:,} b/s {avg_time} sec avg, '
+                        f'{block_chan.average_speed_since_start:,} b/s all time'
+                    )
 
-                print(f'[{block_num:,}] {block_chan.average_speed:,} b/s avg, top: {block_chan.top_speed:,} b/s')
+        except KeyboardInterrupt:
+            ...
 
 
 if __name__ == '__main__':

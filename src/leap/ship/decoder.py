@@ -23,9 +23,10 @@ from leap.sugar import LeapJSONEncoder
 from leap.ship.structs import (
     OutputFormats,
     StateHistoryArgs,
+    GetBlocksResultV0,
     Action,
     AccountV0,
-    RawContractRowV0
+    RawContractRowV0,
 )
 from leap.ship._utils import Whitelist
 
@@ -44,12 +45,10 @@ class BlockDecoder:
         for account, abi in self._contracts.items():
             antelope_rs.load_abi(account, abi)
 
-    def decode_traces(self, raw: bytes) -> bytes:
+    def decode_traces(self, raw: bytes) -> dict:
         '''
         Get an antelope formated `transaction_trace[]` payload
         and decode relevant data.
-
-        Return msgpack encoded result.
 
         '''
         msgpack_traces = antelope_rs.abi_unpack_msgspec(
@@ -77,19 +76,17 @@ class BlockDecoder:
                     e.add_note(f'while decoding action trace {action}')
                     raise e
 
-        return msgspec.msgpack.encode(
+        return (
             ret
             if self.sh_args.output_format == OutputFormats.OPTIMIZED
             else
             traces
         )
 
-    def decode_deltas(self, raw: bytes) -> bytes:
+    def decode_deltas(self, raw: bytes) -> dict:
         '''
         Get an antelope formated `table_delta[]` payload
         and decode relevant data.
-
-        Return msgpack encoded result.
 
         '''
         msgpack_deltas = antelope_rs.abi_unpack_msgspec(
@@ -178,9 +175,45 @@ class BlockDecoder:
 
 
 
-        return msgspec.msgpack.encode(
+        return (
             ret
             if self.sh_args.output_format == OutputFormats.OPTIMIZED
             else
             deltas
         )
+
+    def decode_block_result(self, result: GetBlocksResultV0) -> dict:
+        _result = {
+            'head': result.head.to_dict(),
+            'last_irreversible': result.last_irreversible.to_dict(),
+            'this_block': result.this_block.to_dict(),
+            'prev_block': result.prev_block.to_dict(),
+            'block': None,
+            'traces': None,
+            'deltas': None
+        }
+        try:
+            if self.sh_args.fetch_block:
+                _result['block'] = antelope_rs.abi_unpack(
+                    'std',
+                    'signed_block',
+                    result.block
+                )
+
+            if self.sh_args.fetch_traces:
+                _result['traces'] = self.decode_traces(result.traces)
+
+            if self.sh_args.fetch_deltas:
+                _result['deltas'] = self.decode_deltas(result.deltas)
+
+            return _result
+
+        except* Exception as e:
+            e.add_note(
+                'while decoding block:\n' +
+                json.dumps(
+                    _result,
+                    indent=4,
+                    cls=LeapJSONEncoder
+                )
+            )

@@ -19,6 +19,7 @@ from base64 import b64decode
 from typing import (
     Any,
 )
+
 import msgspec
 from msgspec import to_builtins
 
@@ -66,10 +67,14 @@ class StateHistoryArgs(Struct, frozen=True):
 
     benchmark: bool = False
     benchmark_sample_time: float = 1.0
-    benchmark_max_samples: int = 5
+    benchmark_max_samples: int = 3
 
     backend: str = 'default'
     backend_kwargs: dict = {}
+
+    @property
+    def block_range(self) -> int:
+        return self.end_block_num - self.start_block_num
 
 
 class GetStatusRequestV0(

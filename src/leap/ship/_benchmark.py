@@ -21,45 +21,61 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
         self._aiter = self._iterator()
         self._args = StateHistoryArgs.from_dict(sh_args)
 
-        self._samples: list[int] = []
+        self._samples: list[tuple[int, float]] = []
+        self._total_samples: int = 0
         self._current_sample: int = 0
         self._last_sample_time = time.time()
-        self._top_speed: int = 0
+        self._start_time = None
         self._avg_speed: int = 0
+        self._avg_delta: float = 0
 
     def _maybe_benchmark(self, batch_size: int):
         if self._args.benchmark:
-            self._current_sample += batch_size
             now = time.time()
+            if not self._start_time:
+                self._start_time = now
 
-            if now - self._last_sample_time > self._args.benchmark_sample_time:
+            self._current_sample += batch_size
+            self._total_samples += batch_size
+
+            delta = now - self._last_sample_time
+            if delta >= self._args.benchmark_sample_time:
+                self._samples.append((self._current_sample, delta))
                 self._last_sample_time = now
-                self._samples.append(self._current_sample)
                 self._current_sample = 0
 
-                self._avg_speed = int(sum(self._samples) / len(self._samples))
-                self._top_speed = max(self._samples)
+                total_samples = 0
+                total_sample_time = 0
+                for sample, delta in self._samples:
+                    total_samples += sample
+                    total_sample_time += delta
+
+                self._avg_delta = total_sample_time / len(self._samples)
+                self._avg_speed = total_samples // total_sample_time
 
                 if len(self._samples) > self._args.benchmark_max_samples:
                     self._samples.pop(0)
 
     @property
-    def average_speed(self):
-        if not self._args.benchmark:
-            raise ValueError(
-                'StateHistoryArgs.benchmark must be set to True to calculate speed'
-            )
+    def average_sample_delta(self) -> float:
+        return self._avg_delta
 
+    @property
+    def average_speed(self) -> int:
         return self._avg_speed
 
     @property
-    def top_speed(self):
-        if not self._args.benchmark:
-            raise ValueError(
-                'StateHistoryArgs.benchmark must be set to True to calculate speed'
-            )
+    def average_speed_since_start(self):
+        time_delta = self._last_sample_time - self._start_time
 
-        return self._top_speed
+        if time_delta <= 0:
+            return 0
+
+        return (
+            self._total_samples
+            //
+            time_delta
+        )
 
     async def _iterator(self):
         raise NotImplementedError

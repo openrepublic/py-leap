@@ -13,8 +13,6 @@
 
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import json
-import time
 import logging
 from contextlib import asynccontextmanager as acm
 
@@ -23,7 +21,6 @@ import msgspec
 import antelope_rs
 from trio_websocket import open_websocket_url
 
-from leap.sugar import LeapJSONEncoder
 from leap.ship.decoder import BlockDecoder
 from leap.ship.structs import (
     StateHistoryArgs,
@@ -31,50 +28,9 @@ from leap.ship.structs import (
     GetBlocksRequestV0,
     GetBlocksResultV0,
     GetBlocksAckRequestV0,
-    Block,
-    BlockHeader
+    Block
 )
 from leap.ship._benchmark import BenchmarkedBlockReceiver
-
-
-def decode_block_result(
-    result: GetBlocksResultV0,
-    decoder: BlockDecoder
-) -> Block:
-    block_num = result.this_block.block_num
-
-    final_block: dict = BlockHeader.from_block(result).to_dict()
-
-    try:
-        if result.block:
-            sblock = antelope_rs.abi_unpack(
-                'std',
-                'signed_block',
-                result.block
-            )
-            final_block['block'] = sblock
-
-        if result.traces:
-            mp_traces = decoder.decode_traces(result.traces)
-            final_block['traces'] = msgspec.msgpack.decode(mp_traces)
-
-        if result.deltas:
-            mp_deltas = decoder.decode_deltas(result.deltas)
-            final_block['deltas'] = msgspec.msgpack.decode(mp_deltas)
-
-        return msgspec.convert(final_block, type=Block)
-
-    except Exception as e:
-        e.add_note(f'while decoding block {block_num}')
-        e.add_note(
-            json.dumps(
-                final_block,
-                indent=4,
-                cls=LeapJSONEncoder
-            )
-        )
-
-        raise e
 
 
 class BlockReceiver(BenchmarkedBlockReceiver):
@@ -114,14 +70,15 @@ async def open_state_history(sh_args: StateHistoryArgs):
                     # receive get_blocks_result
                     result_bytes = await ws.get_message()
                     result = antelope_rs.abi_unpack('std', 'result', result_bytes)
-                    block = decode_block_result(
-                        msgspec.convert(result, type=GetBlocksResultV0),
-                        decoder,
-                    )
-                    block_num = block.this_block.block_num
+                    result = msgspec.convert(result, type=GetBlocksResultV0)
+
+                    block = decoder.decode_block_result(result)
+                    if sh_args.output_convert:
+                        block = Block.from_dict(block)
 
                     await send_chan.send([block])
 
+                    block_num = result.this_block.block_num
                     if acked_block == block_num:
                         # ack next batch of messages
                         await ws.send_message(
