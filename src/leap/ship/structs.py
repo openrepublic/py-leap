@@ -28,6 +28,9 @@ import antelope_rs
 
 class Struct(msgspec.Struct):
 
+    def encode(self) -> bytes:
+        return msgspec.msgpack.encode(self)
+
     def to_dict(self):
         return to_builtins(self)
 

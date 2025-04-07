@@ -16,16 +16,16 @@ CPU: AMD Ryzen 9 6900HX with Radeon Graphics (16) @ 4.936GHz
 GPU: AMD ATI Radeon 680M
 Memory: 27798MiB
 
-average speed on these settings: 6.8k
+average speed on these settings: 7.4k
 '''
 
 
 async def _main():
     _log = get_console_log(level='info')
-    start_block_num = 135_764_267
+    start_block_num = 137_000_000
     end_block_num = start_block_num + 1_000_000
     http_endpoint = 'https://testnet.telos.net'
-    ship_endpoint = 'ws://127.0.0.1:29999'
+    ship_endpoint = 'ws://127.0.0.1:19420'
 
     cleos = CLEOS(endpoint=http_endpoint)
 
@@ -55,11 +55,12 @@ async def _main():
                 'stage_0_batch_size': 800,
                 'stage_1_batch_size': 400,
                 'final_batch_size': 10,
-                'decoders': 3,
-                'stage_ratio': 3.0,
-                'res_monitor': True,
+                'decoders': 1,
+                'stage_ratio': 4,
+                'res_monitor': False,
                 'res_monitor_max_batch_size': 2000,
-                'debug_mode': False
+                'debug_mode': False,
+                'loglevel': 'info'
             }
         }
     )

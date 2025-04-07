@@ -51,7 +51,7 @@ class BlockDecoder:
         and decode relevant data.
 
         '''
-        msgpack_traces = antelope_rs.abi_unpack_msgspec(
+        msgpack_traces = antelope_rs.abi_unpack_msgpack(
             'std',
             'transaction_trace[]',
             raw
@@ -89,7 +89,7 @@ class BlockDecoder:
         and decode relevant data.
 
         '''
-        msgpack_deltas = antelope_rs.abi_unpack_msgspec(
+        msgpack_deltas = antelope_rs.abi_unpack_msgpack(
             'std',
             'table_delta[]',
             raw
@@ -217,3 +217,4 @@ class BlockDecoder:
                     cls=LeapJSONEncoder
                 )
             )
+            raise

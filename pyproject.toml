@@ -14,15 +14,16 @@ dependencies = [
     "trio-websocket>=0.12.2",
     "websockets>=15.0.1",
     "tractor",
-    # # linux amd64
-    # "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-manylinux_2_34_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
-    # # windows amd64
-    # "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-win_amd64.whl ; sys_platform == 'win32' and platform_machine == 'AMD64'",
-    # # macos amd64
-    # "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-macosx_10_12_x86_64.whl ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
-    # # macos arm64
-    # "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-macosx_11_0_arm64.whl ; sys_platform == 'darwin' and platform_machine == 'arm64'"
     "psutil>=7.0.0",
+
+    # linux x86_64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.6.0/pyo3_antelope_rs-0.6.0-cp39-abi3-manylinux_2_34_x86_64.whl ; sys_platform == 'linux' and platform_machine == 'x86_64'",
+    # windows amd64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.6.0/pyo3_antelope_rs-0.6.0-cp39-abi3-win_amd64.whl ; sys_platform == 'win32' and platform_machine == 'AMD64'",
+    # macos x86_64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.6.0/pyo3_antelope_rs-0.6.0-cp39-abi3-macosx_10_12_x86_64.whl ; sys_platform == 'darwin' and platform_machine == 'x86_64'",
+    # macos arm64
+    "pyo3-antelope-rs @ https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.6.0/pyo3_antelope_rs-0.6.0-cp39-abi3-macosx_11_0_arm64.whl ; sys_platform == 'darwin' and platform_machine == 'arm64'",
 ]
 
 [dependency-groups]
@@ -43,11 +44,7 @@ snaps = [
 ]
 
 [tool.uv]
-default-groups = [
-    "docs",
-    "dev",
-    "snaps",
-]
+default-groups = []
 environments = [
     "sys_platform == 'linux' and platform_machine == 'x86_64'",
     "sys_platform == 'win32'  and platform_machine == 'AMD64'",
@@ -56,11 +53,11 @@ environments = [
 ]
 
 [tool.uv.sources]
-# tractor = { git = "https://pikers.dev/goodboy/tractor.git", branch = "structural_dynamics_of_flow" }
-tractor = { path = "../tractor", editable = true}
+tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "3327da88478f3345993e0559cde86988279dfb4b" }
+# tractor = { path = "../tractor", editable = true}
 
-[tool.uv.sources.pyo3-antelope-rs]
-path = "../pyo3-antelope-rs"
+# [tool.uv.sources.pyo3-antelope-rs]
+# path = "../pyo3-antelope-rs"
 
 [tool.hatch.metadata]
 allow-direct-references = true
