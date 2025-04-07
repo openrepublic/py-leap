@@ -53,8 +53,8 @@ environments = [
 ]
 
 [tool.uv.sources]
-tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "3327da88478f3345993e0559cde86988279dfb4b" }
-# tractor = { path = "../tractor", editable = true}
+# tractor = { git = "https://pikers.dev/goodboy/tractor.git", rev = "3327da88478f3345993e0559cde86988279dfb4b" }
+tractor = { path = "../tractor", editable = true}
 
 # [tool.uv.sources.pyo3-antelope-rs]
 # path = "../pyo3-antelope-rs"

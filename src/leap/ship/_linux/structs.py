@@ -9,7 +9,6 @@ class PerformanceOptions(Struct, frozen=True):
     ws_batch_size: int = 100
     stage_0_batch_size: int = 200
     stage_1_batch_size: int = 100
-    final_batch_size: int = 400
     # number of stage 0 decoder procs
     decoders: int = 1
     # ratio of stage 0 -> stage 1 decoder procs
@@ -19,8 +18,6 @@ class PerformanceOptions(Struct, frozen=True):
     # root tractor nursery loglevel
     loglevel: str = 'warning'
 
-    # run resource monitor
-    res_monitor: bool = True
     # cpu measuring amount of samples to be averaged
     res_monitor_samples: int = 3
     # cpu measuring sample interval

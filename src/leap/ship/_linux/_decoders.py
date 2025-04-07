@@ -1,7 +1,6 @@
 from typing import AsyncContextManager
 from contextlib import asynccontextmanager as acm
 
-import trio
 import tractor
 import msgspec
 import antelope_rs
@@ -30,11 +29,34 @@ from .structs import (
     IndexedPayloadMsg,
     InputConnectMsg,
     OutputConnectMsg,
+    PerfTweakMsg
 )
 
+import leap.ship._linux._resmon as resmon
 
-# log = tractor.log.get_logger(__name__)
-log = tractor.log.get_console_log(level='info')
+
+log = tractor.log.get_logger(__name__)
+# log = tractor.log.get_console_log(level='info')
+
+
+_output = None
+
+
+@tractor.context
+async def performance_tweak(
+    ctx: tractor.Context,
+    opts: PerfTweakMsg
+):
+    global _output
+
+    opts = PerfTweakMsg.from_dict(opts)
+
+    await ctx.started()
+
+    _output.batch_size = opts.batch_size_options.new_batch_size
+
+    if opts.batch_size_options.must_flush:
+        await _output.flush()
 
 
 @tractor.context
@@ -44,6 +66,7 @@ async def stage_0_decoder(
     sh_args: StateHistoryArgs,
     input_ring: str
 ):
+    global _output
     sh_args = StateHistoryArgs.from_dict(sh_args)
     perf_args = PerformanceOptions.from_dict(
         sh_args.backend_kwargs
@@ -64,7 +87,13 @@ async def stage_0_decoder(
             batch_size=batch_size,
             force_cancel=True
         ) as outputs,
+
+        resmon.register_actor(
+            batch_size=batch_size,
+            tweak_fn=__name__ + '.performance_tweak'
+        )
     ):
+        _output = outputs
         await ctx.started()
         async with control_listener_task(
             ctx,
@@ -98,6 +127,7 @@ async def stage_1_decoder(
     input_ring: str,
     output_ring: str,
 ):
+    global _output
     sh_args = StateHistoryArgs.from_dict(sh_args)
     perf_args = PerformanceOptions.from_dict(
         sh_args.backend_kwargs
@@ -122,7 +152,13 @@ async def stage_1_decoder(
             out_token,
             batch_size=batch_size
         ) as chan,
+
+        resmon.register_actor(
+            batch_size=batch_size,
+            tweak_fn=__name__ + '.performance_tweak'
+        )
     ):
+        _output = chan
         await ctx.started()
         async with control_listener_task(
             ctx,
@@ -198,7 +234,7 @@ async def open_stage_1_decoder(
             ctx=ctx,
             stream=stream
         )
-        await root_ctx.add_stage_1_decoder(cctx, sid)
+        root_ctx.add_stage_1_decoder(cctx, sid)
         yield cctx, input_ring, output_ring
 
 
@@ -233,7 +269,7 @@ async def open_decoder(
 
     perf_args = root_ctx.perf_args
 
-    stage_0_id, stage_1_ids = await root_ctx.next_decoder_ids()
+    stage_0_id, stage_1_ids = root_ctx.next_decoder_ids()
 
     stage_0_portal = await root_ctx.an.start_actor(
         stage_0_id,
@@ -267,7 +303,7 @@ async def open_decoder(
 
         stage_0_ctx.open_stream() as stage_0_stream,
     ):
-        await root_ctx.add_stage_0_decoder(
+        root_ctx.add_stage_0_decoder(
             ChildContext(
                 ctx=stage_0_ctx,
                 stream=stage_0_stream

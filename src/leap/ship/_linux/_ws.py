@@ -17,12 +17,34 @@ from .._exceptions import NodeosConnectionError
 from .structs import (
     PerformanceOptions,
     IndexedPayloadMsg,
+    PerfTweakMsg
 )
 from ._utils import control_listener_task
 
+import leap.ship._linux._resmon as resmon
+
 
 log = tractor.log.get_logger(__name__)
-# log = tractor.log.get_console_log(level='info')
+
+
+_outputs = None
+
+
+@tractor.context
+async def performance_tweak(
+    ctx: tractor.Context,
+    opts: PerfTweakMsg
+):
+    global _outputs
+
+    opts = PerfTweakMsg.from_dict(opts)
+
+    await ctx.started()
+
+    _outputs.batch_size = opts.batch_size_options.new_batch_size
+
+    if opts.batch_size_options.must_flush:
+        await _outputs.flush()
 
 
 @tractor.context
@@ -30,6 +52,7 @@ async def ship_reader(
     ctx: tractor.Context,
     sh_args: StateHistoryArgs,
 ):
+    global _outputs
     sh_args = StateHistoryArgs.from_dict(sh_args)
     perf_args = PerformanceOptions.from_dict(
         sh_args.backend_kwargs
@@ -50,7 +73,14 @@ async def ship_reader(
                 buf_size=perf_args.buf_size,
                 batch_size=batch_size
             ) as outputs,
+
+            resmon.register_actor(
+                batch_size=batch_size,
+                tweak_fn=__name__ + '.performance_tweak'
+            )
         ):
+            _outputs = outputs
+
             async def msg_proxy():
                 msg_index = 0
                 unacked_msgs = 0

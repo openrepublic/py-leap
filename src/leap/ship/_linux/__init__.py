@@ -20,11 +20,12 @@ from typing import (
 from contextlib import (
     asynccontextmanager as acm
 )
-import tractor
 
-from ..structs import (
-    StateHistoryArgs
-)
+import tractor
+from tractor.trionics import gather_contexts
+
+from ..structs import StateHistoryArgs
+from .structs import PerformanceOptions
 
 from ._utils import BlockReceiver
 from ._context import (
@@ -51,12 +52,17 @@ async def open_state_history(
     supervision and IPC.
 
     '''
+    sh_args = StateHistoryArgs.from_dict(sh_args)
+    perf_args = PerformanceOptions.from_dict(sh_args.backend_kwargs)
     async with (
         open_static_resources(sh_args) as root_ctx,
 
         open_control_stream_handlers(root_ctx),
 
-        open_decoder(root_ctx),
+        gather_contexts([
+            open_decoder(root_ctx)
+            for _ in range(perf_args.decoders)
+        ])
     ):
         yield BlockReceiver(root_ctx)
 

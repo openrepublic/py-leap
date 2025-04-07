@@ -1,4 +1,5 @@
 import json
+import importlib
 from heapq import (
     heappush,
     heappop
@@ -22,7 +23,6 @@ from .structs import (
     IndexedPayloadMsg,
     EndIsNearMsg,
     ReachedEndMsg,
-    PerfTweakMsg,
     OutputConnectMsg,
     OutputDisconnectMsg,
     InputConnectMsg,
@@ -49,25 +49,6 @@ async def control_listener_task(
         async for msg in stream:
             msg = msgspec.msgpack.decode(msg, type=ControlMessages)
             match msg:
-                #case ReachedEndMsg():
-                #    if inputs:
-                #        await inputs.aclose()
-
-                #    if output:
-                #        await output.aclose()
-
-                #    break
-
-                case PerfTweakMsg() if output is not None:
-                    bs_opts = msg.batch_size_options
-                    if bs_opts:
-                        if bs_opts.must_flush:
-                            await output.flush(
-                                new_batch_size=bs_opts.new_batch_size
-                            )
-                        elif bs_opts.new_batch_size:
-                            output.batch_size = msg.new_batch_size
-
                 case OutputConnectMsg():
                     if not isinstance(output, RingBufferPublisher):
                         raise RuntimeError(
@@ -235,3 +216,9 @@ class BlockReceiver(BenchmarkedBlockReceiver):
             else:
                 for block in blocks:
                     yield block
+
+
+def import_module_path(path: str):
+    module_path, func_name = path.rsplit('.', 1)
+    module = importlib.import_module(module_path)
+    return getattr(module, func_name)

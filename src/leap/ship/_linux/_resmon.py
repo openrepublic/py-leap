@@ -1,16 +1,17 @@
+import os
+from typing import Awaitable
+from contextlib import asynccontextmanager as acm
+
 import trio
 import psutil
 import tractor
-import msgspec
 
+from ._utils import import_module_path
 from .structs import (
     Struct,
     PerformanceOptions,
-    EndIsNearMsg,
     BatchSizeOptions,
-    PerfTweakMsg,
-    ForwardMsg,
-    ControlMessages
+    PerfTweakMsg
 )
 from ..structs import StateHistoryArgs
 
@@ -22,40 +23,109 @@ class ActorInfo(Struct):
     name: str
     pid: int
     batch_size: int
+    tweak_fn: str
 
 
-_actors: list[ActorInfo] = []
+_actors: dict[str, ActorInfo] = {}
+_tweak_fns: dict[str, Awaitable] = {}
 _actor_registered = trio.Event()
 
 
 @tractor.context
-async def register_actor(
+async def _register_actor(
     ctx: tractor.Context,
     info: ActorInfo
 ):
-    global _actors, _actor_registered
-    await ctx.started()
-    _actors.append(ActorInfo.from_dict(info))
+    global _actors, _actor_registered, _tweak_fns
+
+    info = ActorInfo.from_dict(info)
+
+    tweak_fn = import_module_path(info.tweak_fn)
+
+    _actors[info.name] = info
+    _tweak_fns[info.name] = tweak_fn
     _actor_registered.set()
+
+    log.info(f'{info.name} actor registered')
+
+    await ctx.started()
+
+    async with ctx.open_stream() as stream:
+        await stream.receive()
+
+    del _tweak_fns[info.name]
+    del _actors[info.name]
+
+
+@acm
+async def register_actor(
+    batch_size: int,
+    tweak_fn: str
+):
+    async with (
+        tractor.wait_for_actor('resource_monitor') as portal,
+        portal.open_context(
+            _register_actor,
+            info=ActorInfo(
+                name=tractor.current_actor().name,
+                pid=os.getpid(),
+                batch_size=batch_size,
+                tweak_fn=tweak_fn
+            )
+        ) as (ctx, _),
+        ctx.open_stream(),
+    ):
+        yield
+
+
+async def _tweak_actor(
+    actor_name: str,
+    opts: PerfTweakMsg
+):
+    global _actors, _tweak_fns
+    opts = PerfTweakMsg.from_dict(opts)
+    async with (
+        tractor.find_actor(actor_name) as portal,
+        portal.open_context(
+            _tweak_fns[actor_name],
+            opts=opts
+        )
+    ):
+        ...
+
+    if (
+        opts.batch_size_options
+        and
+        opts.batch_size_options.new_batch_size
+    ):
+        _actors[actor_name].batch_size = opts.batch_size_options.new_batch_size
 
 
 @tractor.context
-async def unregister_actor(
+async def _broadcast_tweak(
     ctx: tractor.Context,
-    actor_name: str
+    opts: PerfTweakMsg
 ):
     global _actors
-    await ctx.started()
 
-    i = None
-    for i, act in enumerate(_actors):
-        if act.name == actor_name:
-            break
+    async with trio.open_nursery() as tn:
+        await ctx.started()
+        for actor in _actors.values():
+            tn.start_soon(
+                _tweak_actor,
+                actor.name,
+                opts
+            )
 
-    if not i:
-        raise ValueError('No actor registered with name {actor_name}')
-
-    del _actors[i]
+async def broadcast_tweak(opts: PerfTweakMsg):
+    async with (
+        tractor.find_actor('resource_monitor') as portal,
+        portal.open_context(
+            _broadcast_tweak,
+            opts=opts
+        )
+    ):
+        ...
 
 
 async def monitor_pid_cpu_usage(
@@ -92,19 +162,7 @@ async def resource_monitor(
         perf_args.res_monitor_cpu_threshold - perf_args.res_monitor_cpu_min_delta
     )
 
-    async with (
-        ctx.open_stream() as control_stream,
-        trio.open_nursery() as n,
-    ):
-        async def _control_listener_task():
-            async for msg in control_stream:
-                msg = msgspec.msgpack.decode(msg, type=ControlMessages)
-
-                match msg:
-                    case EndIsNearMsg():
-                        break
-
-            n.cancel_scope.cancel()
+    async with trio.open_nursery() as n:
 
         async def _monitor():
             global _actor_registered
@@ -114,8 +172,8 @@ async def resource_monitor(
                     _actor_registered = trio.Event()
 
                 async with trio.open_nursery() as n:
-                    for actor in _actors:
-                        n.start_soon(_monitor_actor(actor))
+                    for actor in _actors.values():
+                        n.start_soon(_monitor_actor, actor)
 
         async def _monitor_actor(actor: ActorInfo):
             log.info(f'measuring cpu % usage of {actor.name}')
@@ -168,15 +226,13 @@ async def resource_monitor(
                 )
                 return
 
-            await control_stream.send(
-                ForwardMsg(
-                    dst_actor=actor.name,
-                    payload=PerfTweakMsg(
-                        batch_size_options=BatchSizeOptions(
-                            new_batch_size=new_batch_size
-                        )
+            await _tweak_actor(
+                actor.name,
+                PerfTweakMsg(
+                    batch_size_options=BatchSizeOptions(
+                        new_batch_size=new_batch_size
                     )
-                ).encode()
+                )
             )
 
             log.info(
@@ -186,8 +242,12 @@ async def resource_monitor(
 
             actor.batch_size = new_batch_size
 
-        await ctx.started()
-        n.start_soon(_control_listener_task)
+
         n.start_soon(_monitor)
+        await ctx.started()
+        async with ctx.open_stream() as stream:
+            await stream.receive()
+
+        n.cancel_scope.cancel()
 
     log.info('resource_monitor exit')

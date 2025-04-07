@@ -23,7 +23,7 @@ average speed on these settings: 7.4k
 async def _main():
     _log = get_console_log(level='info')
     start_block_num = 137_000_000
-    end_block_num = start_block_num + 1_000_000
+    end_block_num = start_block_num + 30_000
     http_endpoint = 'https://testnet.telos.net'
     ship_endpoint = 'ws://127.0.0.1:19420'
 
@@ -51,13 +51,12 @@ async def _main():
             'benchmark': True,
             'backend_kwargs': {
                 'buf_size': 512 * 1024 * 1024,  # 512mb
-                'ws_batch_size': 500,
-                'stage_0_batch_size': 800,
-                'stage_1_batch_size': 400,
-                'final_batch_size': 10,
+                'ws_batch_size': 1000,
+                'stage_0_batch_size': 500,
+                'stage_1_batch_size': 250,
                 'decoders': 1,
-                'stage_ratio': 4,
-                'res_monitor': False,
+                'stage_ratio': 2,
+                'res_monitor': True,
                 'res_monitor_max_batch_size': 2000,
                 'debug_mode': False,
                 'loglevel': 'info'
