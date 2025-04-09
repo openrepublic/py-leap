@@ -14,29 +14,18 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from __future__ import annotations
-from typing import (
-    AsyncContextManager
-)
-from contextlib import (
-    asynccontextmanager as acm
-)
+from typing import AsyncContextManager
+from contextlib import asynccontextmanager as acm
 
 import tractor
-from tractor.trionics import gather_contexts
 
 from ..structs import StateHistoryArgs
 from .structs import PerformanceOptions
-
 from ._utils import BlockReceiver
-from ._context import (
-    open_static_resources,
-    open_control_stream_handlers
-)
-from ._decoders import open_decoder
+from ._context import open_root_context
 
 
-# log = tractor.log.get_logger(__name__)
-log = tractor.log.get_console_log(level='info')
+log = tractor.log.get_logger(__name__)
 
 
 @acm
@@ -54,17 +43,12 @@ async def open_state_history(
     '''
     sh_args = StateHistoryArgs.from_dict(sh_args)
     perf_args = PerformanceOptions.from_dict(sh_args.backend_kwargs)
-    async with (
-        open_static_resources(sh_args) as root_ctx,
 
-        open_control_stream_handlers(root_ctx),
+    async with open_root_context(sh_args) as ctx:
+        for i in range(perf_args.decoders):
+            ctx.add_decoder()
 
-        gather_contexts([
-            open_decoder(root_ctx)
-            for _ in range(perf_args.decoders)
-        ])
-    ):
-        yield BlockReceiver(root_ctx)
+        yield BlockReceiver(ctx)
 
     log.info('root exit')
 

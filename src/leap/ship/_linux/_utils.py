@@ -4,30 +4,13 @@ from heapq import (
     heappush,
     heappop
 )
-from contextlib import asynccontextmanager as acm
 
 import trio
 import tractor
 import msgspec
 
-from tractor.ipc import (
-    RingBufferSendChannel,
-    RingBufferReceiveChannel
-)
-from tractor.ipc._ringbuf._pubsub import (
-    RingBufferPublisher,
-    RingBufferSubscriber
-)
-
 from .structs import (
     IndexedPayloadMsg,
-    EndIsNearMsg,
-    ReachedEndMsg,
-    OutputConnectMsg,
-    OutputDisconnectMsg,
-    InputConnectMsg,
-    InputDisconnectMsg,
-    ControlMessages,
 )
 
 from leap.sugar import LeapJSONEncoder
@@ -35,68 +18,7 @@ from ..structs import Block
 from .._benchmark import BenchmarkedBlockReceiver
 
 
-# log = tractor.log.get_logger(__name__)
-log = tractor.log.get_console_log(level='info')
-
-
-@acm
-async def control_listener_task(
-    ctx: tractor.Context,
-    inputs: RingBufferSubscriber | RingBufferReceiveChannel | None = None,
-    output: RingBufferPublisher | RingBufferSendChannel | None = None,
-):
-    async def _listener(stream):
-        async for msg in stream:
-            msg = msgspec.msgpack.decode(msg, type=ControlMessages)
-            match msg:
-                case OutputConnectMsg():
-                    if not isinstance(output, RingBufferPublisher):
-                        raise RuntimeError(
-                            f'Got OutputConnectMsg but output is of type {type(output)}'
-                        )
-
-                    await output.add_channel(
-                        name=msg.ring_name
-                    )
-
-                case OutputDisconnectMsg():
-                    if not isinstance(output, RingBufferPublisher):
-                        raise RuntimeError(
-                            f'Got OutputDisconnectMsg but output is of type {type(output)}'
-                        )
-
-                    await output.remove_channel(
-                        name=msg.ring_name
-                    )
-
-                case InputConnectMsg():
-                    if not isinstance(inputs, RingBufferSubscriber):
-                        raise RuntimeError(
-                            f'Got InputConnectMsg but output is of type {type(output)}'
-                        )
-
-                    await inputs.add_channel(
-                        name=msg.ring_name
-                    )
-
-                case InputDisconnectMsg():
-                    if not isinstance(inputs, RingBufferSubscriber):
-                        raise RuntimeError(
-                            f'Got InputDisconnectMsg but output is of type {type(output)}'
-                        )
-
-                    await inputs.remove_channel(
-                        name=msg.ring_name
-                    )
-
-        log.info('control_listener_task exit')
-
-    async with (
-        ctx.open_stream() as control_stream,
-        trio.open_nursery() as n
-    ):
-        n.start_soon(_listener, control_stream)
-        yield control_stream
+log = tractor.log.get_logger(__name__)
 
 
 class BlockReceiver(BenchmarkedBlockReceiver):
@@ -185,12 +107,12 @@ class BlockReceiver(BenchmarkedBlockReceiver):
                 self._args.max_messages_in_flight * 3
             ):
                 self._near_end = True
-                await self.root_ctx.ctrl_schan.send(EndIsNearMsg())
+                await self.root_ctx.end_is_near()
 
             # maybe we reached end?
             if last_block_num == self._args.end_block_num - 1:
                 print('reached end')
-                await self.root_ctx.ctrl_schan.send(ReachedEndMsg())
+                await self.root_ctx.reached_end()
                 await self._rchan.aclose()
 
             if self._args.output_convert:

@@ -5,7 +5,9 @@ import trio_websocket
 
 from trio_websocket import open_websocket_url
 
-from tractor.ipc._ringbuf._pubsub import open_ringbuf_publisher
+from tractor.ipc._ringbuf._pubsub import (
+    open_ringbuf_publisher,
+)
 
 from ..structs import (
     StateHistoryArgs,
@@ -17,9 +19,7 @@ from .._exceptions import NodeosConnectionError
 from .structs import (
     PerformanceOptions,
     IndexedPayloadMsg,
-    PerfTweakMsg
 )
-from ._utils import control_listener_task
 
 import leap.ship._linux._resmon as resmon
 
@@ -27,32 +27,11 @@ import leap.ship._linux._resmon as resmon
 log = tractor.log.get_logger(__name__)
 
 
-_outputs = None
-
-
-@tractor.context
-async def performance_tweak(
-    ctx: tractor.Context,
-    opts: PerfTweakMsg
-):
-    global _outputs
-
-    opts = PerfTweakMsg.from_dict(opts)
-
-    await ctx.started()
-
-    _outputs.batch_size = opts.batch_size_options.new_batch_size
-
-    if opts.batch_size_options.must_flush:
-        await _outputs.flush()
-
-
 @tractor.context
 async def ship_reader(
     ctx: tractor.Context,
     sh_args: StateHistoryArgs,
 ):
-    global _outputs
     sh_args = StateHistoryArgs.from_dict(sh_args)
     perf_args = PerformanceOptions.from_dict(
         sh_args.backend_kwargs
@@ -71,43 +50,13 @@ async def ship_reader(
 
             open_ringbuf_publisher(
                 buf_size=perf_args.buf_size,
-                batch_size=batch_size
-            ) as outputs,
-
-            resmon.register_actor(
                 batch_size=batch_size,
-                tweak_fn=__name__ + '.performance_tweak'
-            )
+                msgs_per_turn=perf_args.ws_msgs_per_turn,
+            ) as outputs,
         ):
-            _outputs = outputs
-
-            async def msg_proxy():
-                msg_index = 0
-                unacked_msgs = 0
-                while True:
-                    msg = await ws.get_message()
-                    unacked_msgs += 1
-
-                    payload = IndexedPayloadMsg(
-                        index=msg_index,
-                        data=msg[1:]
-                    )
-
-                    await outputs.send(payload.encode())
-                    msg_index += 1
-
-                    if unacked_msgs >= sh_args.max_messages_in_flight:
-                        await ws.send_message(
-                            antelope_rs.abi_pack(
-                                'std',
-                                'request',
-                                GetBlocksAckRequestV0(
-                                    num_messages=sh_args.max_messages_in_flight
-                                ).to_dict()
-                            )
-                        )
-                        unacked_msgs = 0
-
+            await resmon.register_actor(
+                output=outputs
+            )
             # first message is ABI
             _ = await ws.get_message()
 
@@ -148,22 +97,35 @@ async def ship_reader(
             )
 
             await ctx.started()
-            async with trio.open_nursery() as n:
-                n.start_soon(msg_proxy)
-                async with control_listener_task(
-                    ctx,
-                    output=outputs
-                ):
-                    ...
 
-                n.cancel_scope.cancel()
+            msg_index = 0
+            unacked_msgs = 0
+            while True:
+                msg = await ws.get_message()
+                unacked_msgs += 1
+
+                payload = IndexedPayloadMsg(
+                    index=msg_index,
+                    data=msg[1:]
+                )
+
+                await outputs.send(payload.encode())
+                msg_index += 1
+
+                if unacked_msgs >= sh_args.max_messages_in_flight:
+                    await ws.send_message(
+                        antelope_rs.abi_pack(
+                            'std',
+                            'request',
+                            GetBlocksAckRequestV0(
+                                num_messages=sh_args.max_messages_in_flight
+                            ).to_dict()
+                        )
+                    )
+                    unacked_msgs = 0
 
     except trio_websocket._impl.HandshakeError as e:
         raise NodeosConnectionError(
             f'Could not connect to state history endpoint: {sh_args.endpoint}\n'
             'is nodeos running?'
         ) from e
-
-
-
-    log.info('ship_reader exit')

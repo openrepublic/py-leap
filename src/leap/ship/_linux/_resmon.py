@@ -6,10 +6,14 @@ import trio
 import psutil
 import tractor
 
+from tractor.ipc import RingBufferSendChannel
+from tractor.ipc._ringbuf._pubsub import RingBufferPublisher
+
 from ._utils import import_module_path
 from .structs import (
     Struct,
     PerformanceOptions,
+    ResourceMonitorOptions,
     BatchSizeOptions,
     PerfTweakMsg
 )
@@ -18,15 +22,19 @@ from ..structs import StateHistoryArgs
 
 log = tractor.log.get_logger(__name__)
 
+'''
+Resource monitor service
 
+'''
 class ActorInfo(Struct):
     name: str
     pid: int
-    batch_size: int
-    tweak_fn: str
+    batch_size: int | None
+    tweak_fn: str | None
 
 
 _actors: dict[str, ActorInfo] = {}
+_teardown: dict[str, trio.Event] = {}
 _tweak_fns: dict[str, Awaitable] = {}
 _actor_registered = trio.Event()
 
@@ -36,46 +44,25 @@ async def _register_actor(
     ctx: tractor.Context,
     info: ActorInfo
 ):
-    global _actors, _actor_registered, _tweak_fns
+    global _actors, _actor_registered, _tweak_fns, _teardown
 
     info = ActorInfo.from_dict(info)
 
-    tweak_fn = import_module_path(info.tweak_fn)
+    tweak_fn = (
+        import_module_path(info.tweak_fn)
+        if info.tweak_fn else None
+    )
+
+    teardown = trio.Event()
 
     _actors[info.name] = info
     _tweak_fns[info.name] = tweak_fn
+    _teardown[info.name] = teardown
     _actor_registered.set()
 
     log.info(f'{info.name} actor registered')
 
     await ctx.started()
-
-    async with ctx.open_stream() as stream:
-        await stream.receive()
-
-    del _tweak_fns[info.name]
-    del _actors[info.name]
-
-
-@acm
-async def register_actor(
-    batch_size: int,
-    tweak_fn: str
-):
-    async with (
-        tractor.wait_for_actor('resource_monitor') as portal,
-        portal.open_context(
-            _register_actor,
-            info=ActorInfo(
-                name=tractor.current_actor().name,
-                pid=os.getpid(),
-                batch_size=batch_size,
-                tweak_fn=tweak_fn
-            )
-        ) as (ctx, _),
-        ctx.open_stream(),
-    ):
-        yield
 
 
 async def _tweak_actor(
@@ -111,21 +98,12 @@ async def _broadcast_tweak(
     async with trio.open_nursery() as tn:
         await ctx.started()
         for actor in _actors.values():
-            tn.start_soon(
-                _tweak_actor,
-                actor.name,
-                opts
-            )
-
-async def broadcast_tweak(opts: PerfTweakMsg):
-    async with (
-        tractor.find_actor('resource_monitor') as portal,
-        portal.open_context(
-            _broadcast_tweak,
-            opts=opts
-        )
-    ):
-        ...
+            if actor.tweak_fn:
+                tn.start_soon(
+                    _tweak_actor,
+                    actor.name,
+                    opts
+                )
 
 
 async def monitor_pid_cpu_usage(
@@ -150,16 +128,18 @@ async def resource_monitor(
     ctx: tractor.Context,
     sh_args: StateHistoryArgs,
 ):
-    global _actors
+    global _actors, _teardown
     perf_args = PerformanceOptions.from_dict(
         StateHistoryArgs.from_dict(sh_args).backend_kwargs
     )
 
+    settings: ResourceMonitorOptions = perf_args.resmon
+
     usage_upper_bound_pct = (
-        perf_args.res_monitor_cpu_threshold + perf_args.res_monitor_cpu_min_delta
+        settings.cpu_threshold + settings.cpu_min_delta
     )
     usage_lower_bound_pct = (
-        perf_args.res_monitor_cpu_threshold - perf_args.res_monitor_cpu_min_delta
+        settings.cpu_threshold - settings.cpu_min_delta
     )
 
     async with trio.open_nursery() as n:
@@ -176,19 +156,26 @@ async def resource_monitor(
                         n.start_soon(_monitor_actor, actor)
 
         async def _monitor_actor(actor: ActorInfo):
-            log.info(f'measuring cpu % usage of {actor.name}')
+            log.debug(f'measuring cpu % usage of {actor.name}')
 
             try:
                 cpu_usage_normalized = await monitor_pid_cpu_usage(
                     pid=actor.pid,
-                    samples=perf_args.res_monitor_samples,
-                    interval=perf_args.res_monitor_interval
+                    samples=settings.cpu_samples,
+                    interval=settings.cpu_interval
                 )
 
             except psutil.NoSuchProcess:
                 return
 
-            log.info(f'measured {cpu_usage_normalized:.1f} for {actor.name}')
+            log.debug(f'measured {cpu_usage_normalized:.1f} for {actor.name}')
+
+            if (
+                not settings.recommend_batch_size_updates
+                or
+                not actor.tweak_fn
+            ):
+                return
 
             if (
                 cpu_usage_normalized >= usage_lower_bound_pct
@@ -203,28 +190,30 @@ async def resource_monitor(
                 delta_multiplier = -1
 
             batch_size_delta = int(
-                actor.batch_size * perf_args.res_monitor_batch_delta_pct
+                actor.batch_size * settings.batch_delta_pct
             )
             new_batch_size = int(
                 actor.batch_size + (batch_size_delta * delta_multiplier)
             )
             # make sure batch_size recommendation <= res_monitor_max_batch_size
             new_batch_size = min(
-                perf_args.res_monitor_max_batch_size,
+                settings.max_batch_size,
                 new_batch_size
             )
 
             # make sure batch_size recommendation >= res_monitor_min_batch_size
             new_batch_size = max(
-                perf_args.res_monitor_min_batch_size,
+                settings.min_batch_size,
                 new_batch_size
             )
 
             if actor.batch_size == new_batch_size:
-                log.info(
+                log.debug(
                     f'no batch_size recommendation posible for {actor.name}'
                 )
                 return
+
+            old_batch_size = actor.batch_size
 
             await _tweak_actor(
                 actor.name,
@@ -237,7 +226,7 @@ async def resource_monitor(
 
             log.info(
                 f'batch size change for {actor.name}: '
-                f'{new_batch_size}, delta: {new_batch_size - actor.batch_size}'
+                f'{new_batch_size}, delta: {new_batch_size - old_batch_size}'
             )
 
             actor.batch_size = new_batch_size
@@ -245,9 +234,87 @@ async def resource_monitor(
 
         n.start_soon(_monitor)
         await ctx.started()
-        async with ctx.open_stream() as stream:
-            await stream.receive()
 
-        n.cancel_scope.cancel()
+        try:
+            await trio.sleep_forever()
 
-    log.info('resource_monitor exit')
+        finally:
+            # for event in _teardown.values():
+            #     event.set()
+
+            n.cancel_scope.cancel()
+            log.info('resource_monitor exit')
+
+
+'''
+Resource monitor user helpers
+
+'''
+OutputTypes = RingBufferPublisher | RingBufferSendChannel
+
+_output: OutputTypes | None = None
+
+
+@tractor.context
+async def performance_tweak(
+    ctx: tractor.Context,
+    opts: PerfTweakMsg
+):
+    global _output
+
+    if not _output:
+        raise RuntimeError(
+            'called resmon.performance_tweak but _output not set'
+        )
+
+    opts = PerfTweakMsg.from_dict(opts)
+
+    await ctx.started()
+
+    _output.batch_size = opts.batch_size_options.new_batch_size
+
+    if opts.batch_size_options.must_flush:
+        await _output.flush()
+
+
+async def register_actor(
+    output: OutputTypes | None = None
+):
+    global _output
+
+    if _output and output:
+        raise RuntimeError(
+            'expected only one call to `resmon.register_actor`'
+        )
+
+    _output = output
+
+    async with (
+        tractor.wait_for_actor('resource_monitor') as portal,
+        portal.open_context(
+            _register_actor,
+            info=ActorInfo(
+                name=tractor.current_actor().name,
+                pid=os.getpid(),
+                batch_size=(
+                    output.batch_size
+                    if output else None
+                ),
+                tweak_fn=(
+                    __name__ + '.performance_tweak'
+                    if output else None
+                )
+            )
+        ) as (ctx, _),
+    ):
+        ...
+
+async def broadcast_tweak(opts: PerfTweakMsg):
+    async with (
+        tractor.find_actor('resource_monitor') as portal,
+        portal.open_context(
+            _broadcast_tweak,
+            opts=opts
+        )
+    ):
+        ...

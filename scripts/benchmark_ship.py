@@ -16,14 +16,14 @@ CPU: AMD Ryzen 9 6900HX with Radeon Graphics (16) @ 4.936GHz
 GPU: AMD ATI Radeon 680M
 Memory: 27798MiB
 
-average speed on these settings: 7.4k
+average speed on these settings: 7.9k
 '''
 
 
 async def _main():
     _log = get_console_log(level='info')
     start_block_num = 137_000_000
-    end_block_num = start_block_num + 30_000
+    end_block_num = start_block_num + 1_000_000
     http_endpoint = 'https://testnet.telos.net'
     ship_endpoint = 'ws://127.0.0.1:19420'
 
@@ -47,19 +47,28 @@ async def _main():
             'output_format': OutputFormats.OPTIMIZED,
             'output_convert': False,
             'max_message_size': 10 * 1024 * 1024,
-            'max_messages_in_flight': 10_000,
+            'max_messages_in_flight': 24_000,
             'benchmark': True,
             'backend_kwargs': {
-                'buf_size': 512 * 1024 * 1024,  # 512mb
-                'ws_batch_size': 1000,
-                'stage_0_batch_size': 500,
-                'stage_1_batch_size': 250,
+                'buf_size': 512 * 1024 * 1024,
+
+                'ws_batch_size': 2000,
+                'ws_msgs_per_turn': 1,
+
+                'stage_0_batch_size': 1000,
+                'stage_0_msgs_per_turn': 1000,
+
+                'stage_1_batch_size': 100,
+
                 'decoders': 1,
-                'stage_ratio': 2,
-                'res_monitor': True,
-                'res_monitor_max_batch_size': 2000,
+                'stage_ratio': 5,
+
+                'resmon': {
+                    'recommend_batch_size_updates': False
+                },
+
                 'debug_mode': False,
-                'loglevel': 'info'
+                'loglevel': 'warning'
             }
         }
     )

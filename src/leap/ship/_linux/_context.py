@@ -4,14 +4,13 @@ from typing import (
 from contextlib import (
     asynccontextmanager as acm
 )
-from dataclasses import dataclass
 
 import trio
 import tractor
-from tractor import Context
+from tractor.trionics import gather_contexts
 from tractor.ipc._ringbuf._pubsub import (
     RingBufferSubscriber,
-    open_ringbuf_subscriber
+    open_ringbuf_subscriber,
 )
 
 from ..structs import (
@@ -19,18 +18,18 @@ from ..structs import (
 )
 from .structs import (
     PerformanceOptions,
-    EndIsNearMsg,
-    ReachedEndMsg,
     BatchSizeOptions,
     PerfTweakMsg,
-    InputConnectMsg,
-    InputDisconnectMsg,
 )
 
 
 import tractor.ipc._ringbuf._ringd as ringd
 
 from ._ws import ship_reader
+from ._decoders import (
+    stage_0_decoder,
+    stage_1_decoder
+)
 from ._resmon import resource_monitor
 
 import leap.ship._linux._resmon as resmon
@@ -39,39 +38,30 @@ import leap.ship._linux._resmon as resmon
 log = tractor.log.get_logger(__name__)
 
 
-@dataclass
-class ChildContext:
-    ctx: Context
-    stream: tractor.MsgStream
-
-
 class RootContext:
 
     def __init__(
         self,
         sh_args: StateHistoryArgs,
+        tn: trio.Nursery,
         an: tractor.ActorNursery,
-        ringd_portal: tractor.Portal,
         block_channel: RingBufferSubscriber,
-        ship: ChildContext,
-        resmon: ChildContext,
+        resmon
     ):
         self.sh_args = StateHistoryArgs.from_dict(sh_args)
+        self.tn = tn
         self.an = an
         self.perf_args = PerformanceOptions.from_dict(sh_args.backend_kwargs)
-        self.ringd_portal = ringd_portal
         self.block_channel = block_channel
-        self.ship = ship
+
         self.resmon = resmon
 
-        self.ctrl_schan, self.ctrl_rchan = trio.open_memory_channel(0)
+        self._decoder_teardown: dict[str, trio.Event] = {}
 
-        self.stage_0: dict[str, ChildContext] = {}
-        self.stage_1: dict[str, ChildContext] = {}
+        self._decoders = 0
+        self._global_teardown = trio.Event()
 
         self._next_decoder_index = 0
-
-        self.decoders_lock = trio.StrictFIFOLock()
 
     def next_decoder_ids(self) -> tuple[str, list[str]]:
         index = self._next_decoder_index
@@ -84,76 +74,138 @@ class RootContext:
         )
         return stage_0_id, stage_1_ids
 
-    def add_stage_0_decoder(
+    @acm
+    async def _open_stage_1_decoder(
         self,
-        ctx: ChildContext,
-        id: str
-    ):
-        self.stage_0[id] = ctx
+        stage_0_id: str,
+        stage_1_id: str
+    ) -> AsyncContextManager[None]:
 
-    def add_stage_1_decoder(
+        portal = await self.an.start_actor(
+            stage_1_id,
+            enable_modules=[
+                'leap.ship._linux._decoders',
+                'leap.ship._linux._resmon',
+            ]
+        )
+
+        async with portal.open_context(
+            stage_1_decoder,
+            stage_0_id=stage_0_id,
+            stage_1_id=stage_1_id,
+            sh_args=self.sh_args,
+        ) as (ctx, _sent):
+            yield
+            await ctx.cancel()
+
+    @acm
+    async def _open_decoder(
         self,
-        ctx: ChildContext,
-        id: str
-    ):
-        self.stage_1[id] = ctx
+        stage_0_id: str,
+        stage_1_ids: list[str]
+    ) -> AsyncContextManager[None]:
+        '''
+        Add a new decoder to pipeline
 
-    def get_ctx(self, actor_name: str) -> Context:
-        match actor_name:
-            case 'ship_reader':
-                return self.ship
+        '''
+        stage_0_portal = await self.an.start_actor(
+            stage_0_id,
+            enable_modules=[
+                'leap.ship._linux._resmon',
+                'leap.ship._linux._decoders',
+                'tractor.ipc._ringbuf._pubsub',
+            ],
+        )
 
-            case 'resource_monitor':
-                return self.resmon
+        async with (
+            # open long running stage 0 decoding ctx
+            stage_0_portal.open_context(
+                stage_0_decoder,
+                stage_0_id=stage_0_id,
+                sh_args=self.sh_args,
+            ) as (stage_0_ctx, _),
 
-            case _:
-                stage_0_ctx = self.stage_0.get(actor_name, None)
-                if stage_0_ctx:
-                    return stage_0_ctx
+            # open long running stage 1 decoding ctxs
+            gather_contexts([
+                self._open_stage_1_decoder(
+                    stage_0_id,
+                    stage_1_id
+                )
+                for stage_1_id in stage_1_ids
+            ]),
+        ):
+            yield
+            await stage_0_ctx.cancel()
 
-                stage_1_ctx = self.stage_1.get(actor_name, None)
-                if stage_1_ctx:
-                    return stage_1_ctx
+    def add_decoder(self):
+        stage_0_id, stage_1_ids = self.next_decoder_ids()
+        self._decoders += 1
 
-                raise ValueError(f'Unknown actor context {actor_name}')
+        teardown = trio.Event()
+        self._decoder_teardown[stage_0_id] = teardown
 
-    async def multi_send(
-        self,
-        msg: bytes,
-        destinations: list[str]
-    ):
-        for dst in destinations:
-            await self.get_ctx(dst).stream.send(msg)
+        async def _decoder_task():
+            async with self._open_decoder(stage_0_id, stage_1_ids):
+                await teardown.wait()
+
+            self._decoders -= 1
+            if self._decoders == 0:
+                self._global_teardown.set()
+
+        self.tn.start_soon(_decoder_task)
+
+    async def teardown_decoders(self):
+        for teardown in self._decoder_teardown.values():
+            teardown.set()
+
+        await self._global_teardown.wait()
 
     async def close_control_streams(self):
-        await self.ship.stream.aclose()
-
-        for cctx in list(self.stage_0.values()) + list(self.stage_1.values()):
-            await cctx.stream.aclose()
-
         await self.ctrl_schan.aclose()
         await self.ctrl_rchan.aclose()
 
+    async def end_is_near(self):
+        flush_msg = PerfTweakMsg(
+            batch_size_options=BatchSizeOptions(
+                new_batch_size=1,
+                must_flush=True
+            )
+        )
+        await resmon.broadcast_tweak(flush_msg)
+        await self.resmon.cancel()
+
+
+    async def reached_end(self):
+        await self.teardown_decoders()
+
 
 @acm
-async def open_static_resources(
+async def open_root_context(
 
     sh_args: StateHistoryArgs
 
 ) -> AsyncContextManager[RootContext]:
+    global _ctx
 
     sh_args = StateHistoryArgs.from_dict(sh_args)
     perf_args = PerformanceOptions.from_dict(sh_args.backend_kwargs)
 
     async with (
+        # open root nursery, enable pubsub to manage the
+        # subscriber channels
         tractor.open_nursery(
             loglevel=perf_args.loglevel,
             debug_mode=perf_args.debug_mode,
+            enable_modules=[
+                'tractor.ipc._ringbuf._pubsub'
+            ]
         ) as an,
 
-        ringd.open_ringd(loglevel=perf_args.loglevel) as ringd_portal,
+        ringd.open_ringd(loglevel=perf_args.loglevel),
 
-        open_ringbuf_subscriber() as block_channel
+        open_ringbuf_subscriber(
+            buf_size=perf_args.buf_size,
+        ) as block_channel
     ):
         res_monitor_portal = await an.start_actor(
             'resource_monitor',
@@ -162,7 +214,11 @@ async def open_static_resources(
 
         ship_portal = await an.start_actor(
             'ship_reader',
-            enable_modules=['leap.ship._linux._ws'],
+            enable_modules=[
+                'leap.ship._linux._ws',
+                'leap.ship._linux._resmon',
+                'tractor.ipc._ringbuf._pubsub'
+            ],
         )
 
         async with (
@@ -171,95 +227,25 @@ async def open_static_resources(
                 sh_args=sh_args,
             ) as (res_ctx, _),
 
-            res_ctx.open_stream() as res_stream,
-
             ship_portal.open_context(
                 ship_reader,
                 sh_args=sh_args,
             ) as (ship_ctx, _),
 
-            ship_ctx.open_stream() as ship_stream
+            trio.open_nursery() as tn,
         ):
-            resmon = ChildContext(
-                ctx=res_ctx,
-                stream=res_stream
-            )
-
-            ship = ChildContext(
-                ctx=ship_ctx,
-                stream=ship_stream
-            )
-
-            yield RootContext(
+            await resmon.register_actor()
+            ctx = RootContext(
                 sh_args=sh_args,
+                tn=tn,
                 an=an,
-                ringd_portal=ringd_portal,
-                ship=ship,
-                resmon=resmon,
+                resmon=res_ctx,
                 block_channel=block_channel
             )
-
-            await res_ctx.wait_for_result()
-            await ship_ctx.wait_for_result()
+            _ctx = ctx
+            yield ctx
+            await res_ctx.cancel()
+            await ship_ctx.cancel()
 
         # TODO: wtf why hard_kill needed for resource_monitor?
         await an.cancel(hard_kill=True)
-
-
-@acm
-async def open_control_stream_handlers(
-
-    root_ctx: RootContext
-
-) -> AsyncContextManager[None]:
-    '''
-    Root actor listener to all child control streams.
-
-    All tasks should be blocked on `async for` receiver loops so they will
-    close automatically when `root_ctx.close_control_streams()` is called,
-    which does `aclose()` on all context streams.
-
-    '''
-    async def _block_receiver_listener():
-        '''
-            - EndIsNearMsg: We are close to ending, switch all rings
-              to non batched mode & flush.
-
-            - ReachedEndMsg: We reached the end block, teardown pipeline.
-
-        '''
-        async with root_ctx.ctrl_rchan:
-            async for msg in root_ctx.ctrl_rchan:
-                match msg:
-                    case InputConnectMsg():
-                        await root_ctx.block_channel.add_channel(msg.ring_name)
-
-                    case InputDisconnectMsg():
-                        await root_ctx.block_channel.remove_channel(msg.ring_name)
-
-                    case EndIsNearMsg():
-                        flush_msg = PerfTweakMsg(
-                            batch_size_options=BatchSizeOptions(
-                                new_batch_size=1,
-                                must_flush=True
-                            )
-                        )
-
-                        await resmon.broadcast_tweak(flush_msg)
-
-                        # await root_ctx.multi_send(flush_msg.encode(), [
-                        #     *list(root_ctx.stage_0.keys()),
-                        #     *list(root_ctx.stage_1.keys())
-                        # ])
-
-                        await root_ctx.resmon.stream.aclose()
-
-                    case ReachedEndMsg():
-                        # close all context control streams
-                        await root_ctx.close_control_streams()
-                        break
-
-    # spawn listeners in nursery and yield
-    async with trio.open_nursery() as n:
-        n.start_soon(_block_receiver_listener)
-        yield
