@@ -38,15 +38,6 @@ wheels = [
 ]
 
 [[package]]
-name = "async-generator"
-version = "1.10"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/ce/b6/6fa6b3b598a03cba5e80f829e0dadbb49d7645f523d209b2fb7ea0bbb02a/async_generator-1.10.tar.gz", hash = "sha256:6ebb3d106c12920aaae42ccb6f787ef5eefdcdd166ea3d628fa8476abe712144", size = 29870 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/71/52/39d20e03abd0ac9159c162ec24b93fbcaa111e8400308f2465432495ca2b/async_generator-1.10-py3-none-any.whl", hash = "sha256:01c7bf666359b4967d2cda0000cc2e4af16a0ae098cbffcb8472fb9e8ad6585b", size = 18857 },
-]
-
-[[package]]
 name = "attrs"
 version = "25.3.0"
 source = { registry = "https://pypi.org/simple" }
@@ -330,18 +321,6 @@ wheels = [
 ]
 
 [[package]]
-name = "importlib-metadata"
-version = "8.6.1"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "zipp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/33/08/c1395a292bb23fd03bdf572a1357c5a733d3eecbab877641ceacab23db6e/importlib_metadata-8.6.1.tar.gz", hash = "sha256:310b41d755445d74569f993ccfc22838295d9fe005425094fad953d7f15c8580", size = 55767 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/79/9d/0fb148dc4d6fa4a7dd1d8378168d9b4cd8d4560a6fbf6f0121c5fc34eb68/importlib_metadata-8.6.1-py3-none-any.whl", hash = "sha256:02a89390c1e15fdfdc0d7c6b25cb3e62650d0494005c97d6f148bf5b9787525e", size = 26971 },
-]
-
-[[package]]
 name = "iniconfig"
 version = "2.1.0"
 source = { registry = "https://pypi.org/simple" }
@@ -446,15 +425,6 @@ wheels = [
 ]
 
 [[package]]
-name = "mypy-extensions"
-version = "1.0.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/98/a4/1ab47638b92648243faf97a5aeb6ea83059cc3624972ab6b8d2316078d3f/mypy_extensions-1.0.0.tar.gz", hash = "sha256:75dbf8955dc00442a438fc4d0666508a9a97b6bd41aa2f0ffe9d2f2725af0782", size = 4433 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/2a/e2/5d3f6ada4297caebe1a2add3b126fe800c96f56dbe5d1988a2cbe0b267aa/mypy_extensions-1.0.0-py3-none-any.whl", hash = "sha256:4392f6c0eb8a5668a69e23d168ffa70f0be9ccfd32b5cc2d26a34ae5b844552d", size = 4695 },
-]
-
-[[package]]
 name = "outcome"
 version = "1.3.0.post0"
 source = { registry = "https://pypi.org/simple" }
@@ -499,7 +469,7 @@ wheels = [
 
 [[package]]
 name = "py-leap"
-version = "0.1a38"
+version = "0.1a39"
 source = { editable = "." }
 dependencies = [
     { name = "httpx", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },
@@ -534,13 +504,12 @@ snaps = [
 requires-dist = [
     { name = "httpx", specifier = ">=0.28.1,<0.29" },
     { name = "msgspec", specifier = ">=0.19.0" },
-    { name = "pyo3-antelope-rs" },
     { name = "pyo3-antelope-rs", marker = "platform_machine == 'arm64' and sys_platform == 'darwin'", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-macosx_11_0_arm64.whl" },
     { name = "pyo3-antelope-rs", marker = "platform_machine == 'x86_64' and sys_platform == 'darwin'", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-macosx_10_12_x86_64.whl" },
     { name = "pyo3-antelope-rs", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-manylinux_2_34_x86_64.whl" },
     { name = "pyo3-antelope-rs", marker = "platform_machine == 'AMD64' and sys_platform == 'win32'", url = "https://github.com/openrepublic/pyo3-antelope-rs/releases/download/v0.5.0/pyo3_antelope_rs-0.5.0-cp39-abi3-win_amd64.whl" },
     { name = "requests", specifier = "<2.32.0" },
-    { name = "tractor", marker = "sys_platform == 'linux'", git = "https://pikers.dev/goodboy/tractor.git?rev=32b5210648d2c421ec384ed70cc17c5b7017d64c" },
+    { name = "tractor", marker = "sys_platform == 'linux'", git = "https://pikers.dev/goodboy/tractor.git?rev=ring-latest" },
     { name = "trio-websocket", specifier = ">=0.12.2" },
     { name = "websockets", specifier = ">=15.0.1" },
 ]
@@ -863,16 +832,14 @@ wheels = [
 [[package]]
 name = "tractor"
 version = "0.1.0a6.dev0"
-source = { git = "https://pikers.dev/goodboy/tractor.git?rev=32b5210648d2c421ec384ed70cc17c5b7017d64c#32b5210648d2c421ec384ed70cc17c5b7017d64c" }
+source = { git = "https://pikers.dev/goodboy/tractor.git?rev=ring-latest#8f400f6524212aa0ca179353a61e07722113250b" }
 dependencies = [
     { name = "cffi", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "colorlog", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "msgspec", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "pdbp", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "tabcompleter", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "tricycle", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "trio", version = "0.29.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "trio-typing", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
     { name = "wrapt", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
 ]
 
@@ -927,23 +894,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/a1/47/f62e62a1a6f37909aed0bf8f5d5411e06fa03846cfcb64540cd1180ccc9f/trio-0.29.0.tar.gz", hash = "sha256:ea0d3967159fc130acb6939a0be0e558e364fee26b5deeecc893a6b08c361bdf", size = 588952 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c9/55/c4d9bea8b3d7937901958f65124123512419ab0eb73695e5f382521abbfb/trio-0.29.0-py3-none-any.whl", hash = "sha256:d8c463f1a9cc776ff63e331aba44c125f423a5a13c684307e828d930e625ba66", size = 492920 },
-]
-
-[[package]]
-name = "trio-typing"
-version = "0.10.0"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "async-generator", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "importlib-metadata", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "mypy-extensions", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "packaging", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "trio", version = "0.29.0", source = { registry = "https://pypi.org/simple" }, marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-    { name = "typing-extensions", marker = "platform_machine == 'x86_64' and sys_platform == 'linux'" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/74/a87aafa40ec3a37089148b859892cbe2eef08d132c816d58a60459be5337/trio-typing-0.10.0.tar.gz", hash = "sha256:065ee684296d52a8ab0e2374666301aec36ee5747ac0e7a61f230250f8907ac3", size = 38747 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/89/ff/9bd795273eb14fac7f6a59d16cc8c4d0948a619a1193d375437c7f50f3eb/trio_typing-0.10.0-py3-none-any.whl", hash = "sha256:6d0e7ec9d837a2fe03591031a172533fbf4a1a95baf369edebfc51d5a49f0264", size = 42224 },
 ]
 
 [[package]]
@@ -1048,15 +998,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/c9/4a/44d3c295350d776427904d73c189e10aeae66d7f555bb2feee16d1e4ba5a/wsproto-1.2.0.tar.gz", hash = "sha256:ad565f26ecb92588a3e43bc3d96164de84cd9902482b130d0ddbaa9664a85065", size = 53425 }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/78/58/e860788190eba3bcce367f74d29c4675466ce8dddfba85f7827588416f01/wsproto-1.2.0-py3-none-any.whl", hash = "sha256:b9acddd652b585d75b20477888c56642fdade28bdfd3579aa24a4d2c037dd736", size = 24226 },
-]
-
-[[package]]
-name = "zipp"
-version = "3.21.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/3f/50/bad581df71744867e9468ebd0bcd6505de3b275e06f202c2cb016e3ff56f/zipp-3.21.0.tar.gz", hash = "sha256:2c9958f6430a2040341a52eb608ed6dd93ef4392e02ffe219417c1b28b5dd1f4", size = 24545 }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/1a/7e4798e9339adc931158c9d69ecc34f5e6791489d469f5e50ec15e35f458/zipp-3.21.0-py3-none-any.whl", hash = "sha256:ac1bbe05fd2991f160ebce24ffbac5f6d11d83dc90891255885223d42b3cd931", size = 9630 },
 ]
 
 [[package]]
