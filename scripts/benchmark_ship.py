@@ -36,8 +36,6 @@ async def _main():
 
     token_abi = cleos.get_abi('eosio.token', encode=True)
 
-    last_speed_log_time = time.time()
-
     sh_args = StateHistoryArgs.from_dict(
         {
             'endpoint': ship_endpoint,
@@ -51,6 +49,7 @@ async def _main():
             'output_batched': True,
             'output_format': OutputFormats.OPTIMIZED,
             'output_convert': True,
+            'output_validate': True,
             'max_message_size': 10 * 1024 * 1024,
             'max_messages_in_flight': 25_000,
             'benchmark': True,
@@ -92,63 +91,12 @@ async def _main():
     )
 
     async with open_state_history(
-        sh_args=sh_args
+        sh_args=sh_args,
+        benchmark_log_fn=print
     ) as block_chan:
         try:
-            avg_time = int(
-                sh_args.benchmark_sample_time * sh_args.benchmark_max_samples
-            )
-            batch = None
-            block_num = None
-            prev_block_num = start_block_num - 1
-            prev_index = -1
             async for batch in block_chan:
-                for block in batch:
-                    if sh_args.output_convert:
-                        block_num = block.this_block.block_num
-                        index = block.ws_index
-                    else:
-                        block_num = block['this_block']['block_num']
-                        index = block['ws_index']
-
-                    try:
-                        assert block_num == prev_block_num + 1
-                        prev_block_num = block_num
-
-                        assert index == prev_index + 1
-                        prev_index = index
-
-                    except AssertionError as e:
-                        e.add_note(f'block nums: prev: {prev_block_num}, : {block_num}')
-                        e.add_note(f'index: prev: {prev_index}, : {index}')
-                        raise
-
-                now = time.time()
-                if now - last_speed_log_time >= sh_args.benchmark_sample_time:
-                    last_speed_log_time = now
-
-                    avg_block_speed, avg_tx_speed = block_chan.average_speed
-
-                    print(
-                        f'[{block_num:,}] '
-                        f'{block_chan.average_sample_delta:,.2f} sec avg sample delta, '
-                        f'{avg_block_speed:,} b/s '
-                        f'{avg_tx_speed:,} tx/s '
-                        f'{avg_time} sec avg, '
-                        f'{block_chan.average_speed_since_start:,} b/s all time'
-                    )
-
-            if batch:
-                if sh_args.output_convert:
-                    last_block = batch[-1].to_dict()
-
-                else:
-                    last_block = batch[-1]
-
-                print('last block: \n')
-                print(json.dumps(last_block, indent=4))
-
-                assert block_num == sh_args.end_block_num - 1
+                ...
 
         except KeyboardInterrupt:
             ...

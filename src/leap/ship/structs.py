@@ -65,6 +65,7 @@ class StateHistoryArgs(Struct, frozen=True):
     output_batched: bool = False
     output_format: OutputFormats = OutputFormats.OPTIMIZED
     output_convert: bool = True
+    output_validate: bool = False
     decode_abis: bool = True
     decode_meta: bool = False
 
@@ -535,6 +536,7 @@ class BlockHeader(Struct, frozen=True):
 
 class Block(BlockHeader, frozen=True):
     ws_index: int
+    ws_size: int
     block: SignedBlock | None = None
     traces: list[TraceGeneric] | None = None
     deltas: DeltasGeneric | None = None

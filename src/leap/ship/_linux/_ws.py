@@ -173,6 +173,7 @@ async def ship_range_reader(
 
                         payload = IndexedPayloadMsg(
                             index=msg_index,
+                            ws_size=len(msg),
                             data=msg[1:]
                         )
 

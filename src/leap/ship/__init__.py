@@ -15,14 +15,18 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import os
 import platform
-from typing import AsyncContextManager
+from typing import (
+    Callable,
+    AsyncContextManager
+)
 from contextlib import asynccontextmanager as acm
 
-from leap.ship.structs import StateHistoryArgs
+from .structs import StateHistoryArgs
 
-from leap.ship._generic import (
+from ._generic import (
     open_state_history as _generic_open_state_history
 )
+from ._benchmark import BenchmarkedBlockReceiver
 
 match platform.system():
     case 'Linux':
@@ -53,14 +57,20 @@ def get_ship_provider() -> AsyncContextManager:
 
 
 @acm
-async def open_state_history(sh_args: StateHistoryArgs):
+async def open_state_history(
+    sh_args: StateHistoryArgs,
+    benchmark_log_fn: Callable | None = None
+) -> AsyncContextManager[BenchmarkedBlockReceiver]:
 
     sh_args = StateHistoryArgs.from_dict(sh_args)
 
     if sh_args.backend:
         set_ship_backend(sh_args.backend)
 
-    async with (
-        get_ship_provider()(sh_args)
+    open_ship_acm = get_ship_provider()
+
+    async with open_ship_acm(
+        sh_args,
+        benchmark_log_fn=benchmark_log_fn
     ) as provider:
         yield provider

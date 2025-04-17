@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import logging
+from typing import Callable
 from contextlib import asynccontextmanager as acm
 
 import trio
@@ -28,25 +29,21 @@ from leap.ship.structs import (
     GetBlocksRequestV0,
     GetBlocksResultV0,
     GetBlocksAckRequestV0,
-    Block
 )
 from leap.ship._benchmark import BenchmarkedBlockReceiver
 
 
 class BlockReceiver(BenchmarkedBlockReceiver):
-    async def _iterator(self):
+    async def _receiver(self):
         async for batch in self._rchan:
-            block = batch[0]
-
-            txs = len(block['traces'])
-
-            self._maybe_benchmark(1, txs)
-
-            yield block
+            yield batch
 
 
 @acm
-async def open_state_history(sh_args: StateHistoryArgs):
+async def open_state_history(
+    sh_args: StateHistoryArgs,
+    benchmark_log_fn: Callable | None = None
+):
     sh_args = StateHistoryArgs.from_dict(sh_args)
 
     decoder = BlockDecoder(sh_args)
@@ -65,20 +62,26 @@ async def open_state_history(sh_args: StateHistoryArgs):
             # receive blocks & manage acks
             acked_block = sh_args.start_block_num
             block_num = sh_args.start_block_num - 1
+            msg_index = 0
             with send_chan:
-                while block_num != sh_args.end_block_num - 1:
+                while True:
                     # receive get_blocks_result
                     result_bytes = await ws.get_message()
                     result = antelope_rs.abi_unpack('std', 'result', result_bytes)
                     result = msgspec.convert(result, type=GetBlocksResultV0)
 
                     block = decoder.decode_block_result(result)
-                    if sh_args.output_convert:
-                        block = Block.from_dict(block)
+                    block['ws_index'] = msg_index
+                    block['ws_size'] = len(result_bytes)
 
                     await send_chan.send([block])
 
+                    msg_index += 1
+
                     block_num = result.this_block.block_num
+                    if block_num == sh_args.end_block_num - 1:
+                        break
+
                     if acked_block == block_num:
                         # ack next batch of messages
                         await ws.send_message(
@@ -125,4 +128,8 @@ async def open_state_history(sh_args: StateHistoryArgs):
 
         n.start_soon(_receiver)
 
-        yield BlockReceiver(recv_chan, sh_args)
+        yield BlockReceiver(
+            recv_chan,
+            sh_args,
+            log_fn=benchmark_log_fn
+        )

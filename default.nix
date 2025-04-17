@@ -13,9 +13,4 @@ pkgs.mkShell {
 
   LD_LIBRARY_PATH = pkgs.lib.makeLibraryPath nativeBuildInputs;
   TMPDIR = "/tmp";
-
-  shellHook = ''
-    set -e
-    uv venv .venv --python=3.11
-  '';
 }

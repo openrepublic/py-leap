@@ -1,3 +1,4 @@
+import os
 from contextlib import (
     asynccontextmanager as acm
 )
@@ -51,6 +52,8 @@ async def stage_0_decoder(
     )
     batch_size = min(sh_args.block_range, perf_args.stage_0_batch_size)
 
+    pid = os.getpid()
+
     stage_0_id: str = tractor.current_actor().name
 
     stage_1_ids = [
@@ -58,7 +61,7 @@ async def stage_0_decoder(
         for i in range(perf_args.stage_ratio)
     ]
 
-    input_ring = stage_0_id + '.input'
+    input_ring = f'{stage_0_id}-{pid}.input'
 
     log.info(f'opening {stage_0_id}')
 
@@ -85,7 +88,6 @@ async def stage_0_decoder(
                 open_pub_channel_at(
                     reader_id,
                     in_token,
-                    cleanup=False
                 ),
 
                 attach_to_ringbuf_receiver(
@@ -108,9 +110,8 @@ async def stage_0_decoder(
             ):
                 log.info(f'channels ready on {stage_0_id}')
 
-                await ctx.started()
+                await ctx.started(input_ring)
 
-                # try:
                 async for raw_msg in rchan:
                     msg = msgspec.msgpack.decode(raw_msg, type=PipelineMessages)
 
@@ -129,10 +130,7 @@ async def stage_0_decoder(
                             )
 
                             await outputs.send(
-                                IndexedPayloadMsg(
-                                    index=msg.index,
-                                    data=result
-                                ).encode()
+                                msg.new_from_data(result).encode()
                             )
 
             await an.cancel()
@@ -152,13 +150,14 @@ async def stage_1_decoder(
         sh_args.backend_kwargs
     )
     batch_size = min(sh_args.block_range, perf_args.stage_1_batch_size)
+    pid = os.getpid()
 
     decoder = BlockDecoder(sh_args)
 
     stage_1_id: str = tractor.current_actor().name
 
-    input_ring = stage_1_id + '.input'
-    output_ring = stage_1_id + '.output'
+    input_ring = f'{stage_1_id}-{pid}.input'
+    output_ring = f'{stage_1_id}-{pid}.output'
 
     log.info(f'opening {stage_1_id}')
 
@@ -169,14 +168,14 @@ async def stage_1_decoder(
                 buf_size=perf_args.buf_size
             ) as in_token,
 
-            open_pub_channel_at(stage_0_id, in_token, cleanup=False),
+            open_pub_channel_at(stage_0_id, in_token),
 
             open_ringbuf(
                 output_ring,
                 buf_size=perf_args.buf_size
             ) as out_token,
 
-            open_sub_channel_at('block_joiner', out_token, cleanup=False),
+            open_sub_channel_at('block_joiner', out_token),
 
             attach_to_ringbuf_channel(
                 in_token,
@@ -199,12 +198,10 @@ async def stage_1_decoder(
                         block = decoder.decode_block_result(result)
 
                         block['ws_index'] = msg.index
+                        block['ws_size'] = msg.ws_size
 
                         await chan.send(
-                            IndexedPayloadMsg(
-                                index=msg.index,
-                                data=block
-                            ).encode()
+                            msg.new_from_data(block).encode()
                         )
 
     finally:
@@ -235,16 +232,12 @@ async def open_decoder(
             ],
         )
 
-        async with (
-            # open long running stage 0 decoding ctx
-            stage_0_portal.open_context(
-                stage_0_decoder,
-                reader_id=reader_id,
-                sh_args=sh_args,
-            ) as (stage_0_ctx, _),
-        ):
+        async with stage_0_portal.open_context(
+            stage_0_decoder,
+            reader_id=reader_id,
+            sh_args=sh_args,
+        ) as (stage_0_ctx, _):
             yield
-            # await stage_0_ctx.cancel()
 
         await an.cancel()
 

@@ -1,16 +1,8 @@
-import json
-import logging
 import importlib
 
 import tractor
 import msgspec
-from tractor.ipc._ringbuf import RingBufferReceiveChannel
 
-from leap.sugar import LeapJSONEncoder
-from ..structs import (
-    StateHistoryArgs,
-    Block
-)
 from .._benchmark import BenchmarkedBlockReceiver
 
 
@@ -51,65 +43,9 @@ get_console_log = tractor.log.get_console_log
 
 
 class BlockReceiver(BenchmarkedBlockReceiver):
-
-    def __init__(
-        self,
-        rchan: RingBufferReceiveChannel,
-        sh_args: StateHistoryArgs
-    ):
-        super().__init__(rchan, sh_args)
-        self._near_end = False
-
-    async def _iterator(self):
-        async for blocks in self._rchan:
-            blocks = msgspec.msgpack.decode(blocks)
-
-            txs = sum((
-                len(block['traces'])
-                for block in blocks
-            ))
-
-            self._maybe_benchmark(len(blocks), txs)
-
-            last_block_num = blocks[-1]['this_block']['block_num']
-
-            # maybe near end
-            if (
-                not self._near_end
-                and
-                self._args.end_block_num - last_block_num
-                <=
-                self._args.max_messages_in_flight * 3
-            ):
-                self._near_end = True
-
-            if self._args.output_convert:
-                try:
-                    blocks = msgspec.convert(blocks, type=list[Block])
-
-                except msgspec.ValidationError as e:
-                    try:
-                        e.add_note(
-                            'Msgspec error while decoding batch:\n' +
-                            json.dumps(blocks, indent=4, cls=LeapJSONEncoder)
-                        )
-
-                    except Exception as inner_e:
-                        inner_e.add_note('could not decode without type either!')
-                        raise inner_e from e
-
-                    raise e
-
-            if self._args.output_batched:
-                yield blocks
-
-            else:
-                for block in blocks:
-                    yield block
-
-            # maybe we reached end?
-            if last_block_num == self._args.end_block_num - 1:
-                break
+    async def _receiver(self):
+        async for batch in self._rchan:
+            yield msgspec.msgpack.decode(batch)
 
 
 def import_module_path(path: str):

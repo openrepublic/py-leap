@@ -1,12 +1,7 @@
+from __future__ import annotations
+
 import msgspec
 from ..structs import Struct
-
-
-class ResourceMonitorOptions(Struct, frozen=True):
-    # cpu measuring amount of samples to be averaged
-    cpu_samples: int = 2
-    # cpu measuring sample interval
-    cpu_interval: float = 1.0
 
 
 class PerActorLoggingOptions(Struct, frozen=True):
@@ -48,16 +43,6 @@ class PerformanceOptions(Struct, frozen=True):
     debug_mode: bool = False
     # logging levels
     loglevels: PerActorLoggingOptions = PerActorLoggingOptions()
-    # configuration for resource_monitor actor
-    resmon: ResourceMonitorOptions = ResourceMonitorOptions()
-
-
-    @property
-    def stage_1_decoders(self) -> int:
-        '''
-        Amount of stage 1 decoder processes
-        '''
-        return int(self.decoders * self.stage_ratio)
 
 
 # main pipeline message
@@ -68,7 +53,15 @@ class IndexedPayloadMsg(
     tag=True
 ):
     index: int
+    ws_size: int
     data: msgspec.Raw
+
+    def new_from_data(self, new_data: msgspec.Raw) -> IndexedPayloadMsg:
+        return IndexedPayloadMsg(
+            index=self.index,
+            ws_size=self.ws_size,
+            data=new_data
+        )
 
     def decode_data(self, type=bytes) -> bytes:
         return msgspec.msgpack.decode(self.data, type=type)
