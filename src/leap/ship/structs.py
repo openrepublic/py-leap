@@ -70,7 +70,7 @@ class StateHistoryArgs(Struct, frozen=True):
 
     benchmark: bool = False
     benchmark_sample_time: float = 1.0
-    benchmark_max_samples: int = 3
+    benchmark_max_samples: int = 10
 
     backend: str = 'default'
     backend_kwargs: dict = {}
@@ -534,6 +534,7 @@ class BlockHeader(Struct, frozen=True):
 
 
 class Block(BlockHeader, frozen=True):
+    ws_index: int
     block: SignedBlock | None = None
     traces: list[TraceGeneric] | None = None
     deltas: DeltasGeneric | None = None

@@ -1,104 +1,79 @@
 import json
+import logging
 import importlib
-from heapq import (
-    heappush,
-    heappop
-)
 
-import trio
 import tractor
 import msgspec
-
-from .structs import (
-    IndexedPayloadMsg,
-)
+from tractor.ipc._ringbuf import RingBufferReceiveChannel
 
 from leap.sugar import LeapJSONEncoder
-from ..structs import Block
+from ..structs import (
+    StateHistoryArgs,
+    Block
+)
 from .._benchmark import BenchmarkedBlockReceiver
 
 
-log = tractor.log.get_logger(__name__)
+get_logger = tractor.log.get_logger
+get_console_log = tractor.log.get_console_log
+# _proj_name: str = 'py-leap'
+#
+#
+# def get_logger(
+#     name: str = None,
+# 
+# ) -> logging.Logger:
+#     '''
+#     Return the package log or a sub-log for `name` if provided.
+# 
+#     '''
+#     return tractor.log.get_logger(
+#         name=name,
+#         _root_name=_proj_name,
+#     )
+# 
+# def get_console_log(
+#     level: str | None = None,
+#     name: str | None = None,
+# 
+# ) -> logging.Logger:
+#     '''
+#     Get the package logger and enable a handler which writes to stderr.
+# 
+#     Yeah yeah, i know we can use ``DictConfig``. You do it...
+# 
+#     '''
+#     return tractor.log.get_console_log(
+#         level,
+#         name=name,
+#         _root_name=_proj_name,
+#     )  # our root logger
 
 
 class BlockReceiver(BenchmarkedBlockReceiver):
 
     def __init__(
         self,
-        root_ctx
+        rchan: RingBufferReceiveChannel,
+        sh_args: StateHistoryArgs
     ):
-        super().__init__(
-            root_ctx.block_channel,
-            root_ctx.sh_args
-        )
-
-        self.root_ctx = root_ctx
-
-        self._next_index = 0
+        super().__init__(rchan, sh_args)
         self._near_end = False
-        self._pqueue: list[tuple[int, dict]] = []
-
-    def _can_pop_next(self) -> bool:
-        '''
-        Predicate to check if we have next in order block on pqueue.
-
-        '''
-        return (
-            len(self._pqueue) > 0
-            and
-            self._pqueue[0][0] == self._next_index
-        )
-
-    def _pop_next(self) -> dict:
-        '''
-        Pop first block from pqueue.
-
-        '''
-        _, msg = heappop(self._pqueue)
-        self._next_index += 1
-        return msg
-
-    async def _drain_to_heap(self):
-        '''
-        While we dont have next in order block on pqueue, receive from
-        ring subscriber, after return its implied next in order block
-        is ready and present on pqueue.
-
-        '''
-        new_blocks = 0
-        while not self._can_pop_next():
-            msg = await self._rchan.receive()
-            msg = msgspec.msgpack.decode(msg, type=IndexedPayloadMsg)
-            block = msg.decode_data(type=dict)
-            heappush(self._pqueue, (msg.index, block))
-            new_blocks += 1
-
-        if new_blocks > 0:
-            self._maybe_benchmark(new_blocks)
 
     async def _iterator(self):
-        '''
-        Until ring subscriber is closed, await next in order message, check for
-        end conditions and optionally convert output to desired format.
+        async for blocks in self._rchan:
+            blocks = msgspec.msgpack.decode(blocks)
 
-        '''
-        while True:
-            try:
-                await self._drain_to_heap()
+            txs = sum((
+                len(block['traces'])
+                for block in blocks
+            ))
 
-            except trio.ClosedResourceError:
-                break
-
-            blocks: list[dict] = []
-            while self._can_pop_next():
-                blocks.append(self._pop_next())
-
-            if len(blocks) == 0:
-                raise RuntimeError('Expected batch size to be always > 0')
+            self._maybe_benchmark(len(blocks), txs)
 
             last_block_num = blocks[-1]['this_block']['block_num']
 
-            # maybe signal near end
+            # maybe near end
             if (
                 not self._near_end
                 and
@@ -107,13 +82,6 @@ class BlockReceiver(BenchmarkedBlockReceiver):
                 self._args.max_messages_in_flight * 3
             ):
                 self._near_end = True
-                await self.root_ctx.end_is_near()
-
-            # maybe we reached end?
-            if last_block_num == self._args.end_block_num - 1:
-                print('reached end')
-                await self.root_ctx.reached_end()
-                await self._rchan.aclose()
 
             if self._args.output_convert:
                 try:
@@ -138,6 +106,10 @@ class BlockReceiver(BenchmarkedBlockReceiver):
             else:
                 for block in blocks:
                     yield block
+
+            # maybe we reached end?
+            if last_block_num == self._args.end_block_num - 1:
+                break
 
 
 def import_module_path(path: str):

@@ -3,8 +3,15 @@ import time
 import trio
 
 from leap.ship.structs import (
+    Struct,
     StateHistoryArgs,
 )
+
+
+class Sample(Struct):
+    delta: float = 0
+    blocks: int = 0
+    txs: int = 0
 
 
 class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
@@ -21,37 +28,45 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
         self._aiter = self._iterator()
         self._args = StateHistoryArgs.from_dict(sh_args)
 
-        self._samples: list[tuple[int, float]] = []
-        self._total_samples: int = 0
-        self._current_sample: int = 0
+        self._samples: list[Sample] = []
+        self._total_blocks_sampled: int = 0
+
+        self._current_sample = Sample()
         self._last_sample_time = time.time()
+
         self._start_time = None
-        self._avg_speed: int = 0
+        self._avg_block_speed: int = 0
+        self._avg_tx_speed: int = 0
         self._avg_delta: float = 0
 
-    def _maybe_benchmark(self, batch_size: int):
+    def _maybe_benchmark(self, batch_size: int, txs: int):
         if self._args.benchmark:
             now = time.time()
             if not self._start_time:
                 self._start_time = now
 
-            self._current_sample += batch_size
-            self._total_samples += batch_size
+            self._current_sample.blocks += batch_size
+            self._current_sample.txs += txs
+            self._total_blocks_sampled += batch_size
 
             delta = now - self._last_sample_time
             if delta >= self._args.benchmark_sample_time:
-                self._samples.append((self._current_sample, delta))
+                self._current_sample.delta = delta
+                self._samples.append(self._current_sample)
                 self._last_sample_time = now
-                self._current_sample = 0
+                self._current_sample = Sample()
 
-                total_samples = 0
+                total_blocks = 0
+                total_txs = 0
                 total_sample_time = 0
-                for sample, delta in self._samples:
-                    total_samples += sample
-                    total_sample_time += delta
+                for sample in self._samples:
+                    total_blocks += sample.blocks
+                    total_txs += sample.txs
+                    total_sample_time += sample.delta
 
                 self._avg_delta = total_sample_time / len(self._samples)
-                self._avg_speed = total_samples // total_sample_time
+                self._avg_block_speed = total_blocks // total_sample_time
+                self._avg_tx_speed = total_txs // total_sample_time
 
                 if len(self._samples) > self._args.benchmark_max_samples:
                     self._samples.pop(0)
@@ -61,8 +76,8 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
         return self._avg_delta
 
     @property
-    def average_speed(self) -> int:
-        return self._avg_speed
+    def average_speed(self) -> tuple[int, int]:
+        return self._avg_block_speed, self._avg_tx_speed
 
     @property
     def average_speed_since_start(self):
@@ -72,7 +87,7 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
             return 0
 
         return (
-            self._total_samples
+            self._total_blocks_sampled
             //
             time_delta
         )

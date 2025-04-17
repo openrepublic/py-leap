@@ -17,15 +17,9 @@ from __future__ import annotations
 from typing import AsyncContextManager
 from contextlib import asynccontextmanager as acm
 
-import tractor
-
 from ..structs import StateHistoryArgs
-from .structs import PerformanceOptions
 from ._utils import BlockReceiver
 from ._context import open_root_context
-
-
-log = tractor.log.get_logger(__name__)
 
 
 @acm
@@ -42,13 +36,6 @@ async def open_state_history(
 
     '''
     sh_args = StateHistoryArgs.from_dict(sh_args)
-    perf_args = PerformanceOptions.from_dict(sh_args.backend_kwargs)
 
-    async with open_root_context(sh_args) as ctx:
-        for i in range(perf_args.decoders):
-            ctx.add_decoder()
-
-        yield BlockReceiver(ctx)
-
-    log.info('root exit')
-
+    async with open_root_context(sh_args) as block_stream:
+        yield block_stream

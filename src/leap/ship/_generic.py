@@ -36,13 +36,13 @@ from leap.ship._benchmark import BenchmarkedBlockReceiver
 class BlockReceiver(BenchmarkedBlockReceiver):
     async def _iterator(self):
         async for batch in self._rchan:
-            self._maybe_benchmark(len(batch))
+            block = batch[0]
 
-            if self._args.output_batched:
-                yield batch
+            txs = len(block['traces'])
 
-            else:
-                yield batch[0]
+            self._maybe_benchmark(1, txs)
+
+            yield block
 
 
 @acm
