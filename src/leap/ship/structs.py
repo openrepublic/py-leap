@@ -15,15 +15,21 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from __future__ import annotations
 import enum
-from base64 import b64decode
 from typing import (
     Any,
+    Self,
 )
 
 import msgspec
 from msgspec import to_builtins
 
-import antelope_rs
+from tractor.msg._codec import mk_msgpack_codec
+
+from leap.abis import (
+    ABI,
+    standard
+)
+from leap.protocol import leap_dec_hook
 
 
 class Struct(msgspec.Struct):
@@ -31,15 +37,36 @@ class Struct(msgspec.Struct):
     def encode(self) -> bytes:
         return msgspec.msgpack.encode(self)
 
+    @classmethod
+    def from_bytes(cls, raw: bytes):
+        return msgspec.msgpack.decode(raw, type=cls)
+
     def to_dict(self):
         return to_builtins(self)
 
     @classmethod
-    def from_dict(cls, d: dict | Struct):
+    def from_dict(cls, d: dict | Struct) -> Self:
         if isinstance(d, cls):
             return d
 
-        return msgspec.convert(d, type=cls)
+        return msgspec.convert(
+            d,
+            type=cls,
+            dec_hook=leap_dec_hook
+        )
+
+    @classmethod
+    def from_antelope_raw(
+        cls,
+        raw: bytes,
+        abi_type: str,
+        abi: ABI = standard,
+    ) -> Self:
+        value = abi.unpack(
+            abi_type,
+            raw
+        )
+        return msgspec.convert(value, type=cls)
 
 
 class OutputFormats(enum.StrEnum):
@@ -58,7 +85,7 @@ class StateHistoryArgs(Struct, frozen=True):
     fetch_traces: bool = False
     fetch_deltas: bool = False
 
-    start_contracts: dict[str, bytes] = {}
+    start_contracts: dict[str, ABI] = {}
     action_whitelist: dict[str, list[str]] | None = {}
     delta_whitelist: dict[str, list[str]] | None = {}
 
@@ -68,6 +95,7 @@ class StateHistoryArgs(Struct, frozen=True):
     output_validate: bool = False
     decode_abis: bool = True
     decode_meta: bool = False
+    block_meta: bool = False
 
     benchmark: bool = False
     benchmark_sample_time: float = 1.0
@@ -285,9 +313,8 @@ class Action(msgspec.Struct, frozen=True):
     authorization: list[PermissionLevel]
     data: bytes
 
-    def decode(self) -> dict:
-        return antelope_rs.abi_unpack(
-            self.account,
+    def decode(self, abi: ABI) -> dict:
+        return abi.unpack(
             self.name,
             self.data
         )
@@ -305,15 +332,6 @@ class AccountV0(
     abi: bytes
     creation_date: str
 
-    @classmethod
-    def from_b64(self, raw: str) -> AccountV0:
-        row = antelope_rs.abi_unpack(
-            'std',
-            'account',
-            b64decode(raw)
-        )
-        return msgspec.convert(row, type=AccountV0)
-
 
 class RawContractRowV0(
     Struct,
@@ -330,24 +348,14 @@ class RawContractRowV0(
     def as_dict(self):
         return to_builtins(self)
 
-    @classmethod
-    def from_b64(self, raw: str) -> RawContractRowV0:
-        row = antelope_rs.abi_unpack(
-            'std',
-            'contract_row',
-            b64decode(raw)
-        )
-        return msgspec.convert(row, type=RawContractRowV0)
-
-    def decode(self) -> ContractRowV0:
+    def decode(self, abi: ABI) -> ContractRowV0:
         return ContractRowV0(
             code=self.code,
             scope=self.scope,
             table=self.table,
             primary_key=self.primary_key,
             payer=self.payer,
-            value=antelope_rs.abi_unpack(
-                self.code,
+            value=abi.unpack(
                 self.table,
                 self.value
             )
@@ -535,8 +543,10 @@ class BlockHeader(Struct, frozen=True):
 
 
 class Block(BlockHeader, frozen=True):
-    ws_index: int
-    ws_size: int
+    meta: dict | None = None
     block: SignedBlock | None = None
     traces: list[TraceGeneric] | None = None
     deltas: DeltasGeneric | None = None
+
+
+block_encoder, block_decoder = mk_msgpack_codec(spec=list[dict])

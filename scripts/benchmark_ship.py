@@ -1,11 +1,8 @@
-import time
-import json
-
 import trio
 
 from tractor.log import get_console_log
 
-from leap import CLEOS
+from leap.abis import token
 from leap.ship import open_state_history
 from leap.ship.structs import StateHistoryArgs, OutputFormats
 
@@ -14,13 +11,12 @@ from leap.ship.structs import StateHistoryArgs, OutputFormats
 OS: NixOS 25.05pre773904.698214a32beb (Warbler) x86_64
 Kernel: 6.14.0
 CPU: AMD Ryzen 9 6900HX with Radeon Graphics (16) @ 4.936GHz
-GPU: AMD ATI Radeon 680M
 Memory: 27798MiB
 
 average speed on these settings:
 
- - single node: 7.7-7.9k
- - two nodes: 8.8-8.9k
+ - single node: 10k
+ - two nodes: 16k
 
 '''
 
@@ -28,13 +24,9 @@ average speed on these settings:
 async def _main():
     _log = get_console_log(level='info')
     start_block_num = 137_000_000
-    end_block_num = start_block_num + 200_000
-    http_endpoint = 'https://testnet.telos.net'
+    end_block_num = 175_000_000
+    # end_block_num = start_block_num + 10_000_000
     ship_endpoint = 'ws://127.0.0.1:19420'
-
-    cleos = CLEOS(endpoint=http_endpoint)
-
-    token_abi = cleos.get_abi('eosio.token', encode=True)
 
     sh_args = StateHistoryArgs.from_dict(
         {
@@ -43,13 +35,14 @@ async def _main():
             'end_block_num': end_block_num,
             'fetch_traces': True,
             'fetch_deltas': True,
-            'start_contracts': {'eosio.token': token_abi},
-            'action_whitelist': {'eosio.token': ['*']},
-            'delta_whitelist': {'eosio.token': ['*']},
+            'start_contracts': {'eosio.token': token},
+            'action_whitelist': {'eosio.token': ['transfer', 'issue', 'retire']},
+            'delta_whitelist': {'eosio.token': ['accounts', 'stat']},
             'output_batched': True,
             'output_format': OutputFormats.OPTIMIZED,
-            'output_convert': True,
-            'output_validate': True,
+            'output_convert': False,
+            'output_validate': False,
+            'block_meta': False,
             'max_message_size': 10 * 1024 * 1024,
             'max_messages_in_flight': 25_000,
             'benchmark': True,
@@ -59,31 +52,34 @@ async def _main():
                 ],
 
                 'buf_size': 512 * 1024 * 1024,
+                'small_buf_size': 64 * 1024 * 1024,
 
                 'ws_range_stride': 25_000,
-                'ws_batch_size': 1000,
+
+                'ws_batch_size': 2000,
                 'ws_msgs_per_turn': 1,
 
-                'stage_0_batch_size': 250,
-                'stage_0_msgs_per_turn': 250,
+                'empty_blocks_batch_size': 1000,
+                'empty_blocks_msgs_per_turn': 1,
+                'full_blocks_batch_size': 1000,
+                'full_blocks_msgs_per_turn': 1000,
 
-                'stage_1_batch_size': 100,
-
-                'final_batch_size': 10,
+                'final_batch_size': 1000,
 
                 'ws_readers': 2,
-                'decoders': 1,
-                'stage_ratio': 5,
+                'empty_decoders': 3,
+                'full_decoders': 1,
 
                 'debug_mode': False,
 
                 'loglevels': {
                     # 'root': 'info',
-                    # 'joiner': 'info',
+                    # 'filters': 'info',
+                    # 'joiners': 'info',
                     # 'ship_supervisor': 'info',
-                    # 'ship_reader': 'info',
-                    # 'decoder_stage_0': 'info',
-                    # 'decoder_stage_1': 'info',
+                    # 'ship_readers': 'info',
+                    # 'full_decoders': 'info',
+                    # 'empty_decoders': 'info',
                 }
 
             }

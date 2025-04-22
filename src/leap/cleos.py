@@ -32,10 +32,20 @@ import antelope_rs
 from msgspec import Struct
 from requests.adapters import HTTPAdapter
 
+from leap.abis import ABIS
 from leap.sugar import random_leap_name
-from leap.errors import ChainHTTPError, ChainAPIError, ContractDeployError, TransactionPushError
-from leap.tokens import DEFAULT_SYS_TOKEN_CODE, DEFAULT_SYS_TOKEN_SYM
+from leap.errors import (
+    ChainHTTPError,
+    ChainAPIError,
+    ContractDeployError,
+    TransactionPushError
+)
+from leap.tokens import (
+    DEFAULT_SYS_TOKEN_CODE,
+    DEFAULT_SYS_TOKEN_SYM
+)
 from leap.protocol import (
+    ABI,
     Asset,
     GetTableRowsResponse,
     get_tapos_info,
@@ -61,6 +71,7 @@ class CLEOS:
     def __init__(
         self,
         endpoint: str = 'http://127.0.0.1:8888',
+        abis: dict[str, ABI] = ABIS,
         ship_endpoint: str | None = None,
         node_dir: Path | None = None,
         logger = None
@@ -78,7 +89,7 @@ class CLEOS:
         self.private_keys: dict[str, str] = {}
         self._key_to_acc: dict[str, list[str]] = {}
 
-        self._loaded_abis: dict[str, bytes] = {}
+        self._loaded_abis: dict[str, ABI] = abis
 
         self._sys_token_init = False
         self.sys_token_supply = Asset(0, DEFAULT_SYS_TOKEN_SYM)
@@ -98,25 +109,27 @@ class CLEOS:
 
     # local abi store methods
 
-    def load_abi(self, account: str, abi: dict | str | bytes):
+    def load_abi(self, account: str, abi: ABI | dict | str | bytes):
         '''Load abi dict into internal store
         '''
+        if isinstance(abi, bytes):
+            abi = abi.decode()
+
         if isinstance(abi, dict):
             abi = json.dumps(abi)
 
         if isinstance(abi, str):
-            abi = abi.encode('utf-8')
+            abi = ABI.from_str(abi)
 
-        antelope_rs.load_abi(account, abi)
         self._loaded_abis[account] = abi
 
     def load_abi_file(self, account: str, abi_path: str | Path):
         '''Load abi file into internal store
         '''
-        with open(abi_path, 'rb') as abi_file:
+        with open(abi_path, 'r') as abi_file:
             self.load_abi(account, abi_file.read())
 
-    def get_loaded_abi(self, account: str) -> bytes:
+    def get_loaded_abi(self, account: str) -> ABI:
         '''Return a previously loaded abi
         '''
         if account not in self._loaded_abis:
@@ -302,7 +315,18 @@ class CLEOS:
 
         chain_id: str = chain_info['chain_id']
 
-        return create_and_sign_tx(chain_id, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
+        return create_and_sign_tx(
+            chain_id,
+            actions,
+            {
+                action['account']: self.get_loaded_abi(action['account'])
+                for action in actions
+            },
+            key,
+            ref_block_num=ref_block_num,
+            ref_block_prefix=ref_block_prefix,
+            **kwargs
+        )
 
     async def _a_create_signed_tx(
         self,
@@ -316,7 +340,18 @@ class CLEOS:
 
         chain_id: str = chain_info['chain_id']
 
-        return create_and_sign_tx(chain_id, actions, key, ref_block_num=ref_block_num, ref_block_prefix=ref_block_prefix, **kwargs)
+        return create_and_sign_tx(
+            chain_id,
+            actions,
+            {
+                action['account']: self.get_loaded_abi(action['account'])
+                for action in actions
+            },
+            key,
+            ref_block_num=ref_block_num,
+            ref_block_prefix=ref_block_prefix,
+            **kwargs
+        )
 
     def push_actions(
         self,
@@ -461,7 +496,7 @@ class CLEOS:
         self,
         account_name: str,
         wasm: bytes,
-        abi: dict,
+        abi: ABI,
         privileged: bool = False,
         create_account: bool = True,
         staked: bool = True
@@ -520,7 +555,7 @@ class CLEOS:
         local_shasum = sha256(wasm).hexdigest()
         self.logger.info(f'contract hash: {local_shasum}')
 
-        self.logger.info(f'loading abi...')
+        self.logger.info('loading abi...')
         self.load_abi(account_name, abi)
 
         self.logger.info('deploy...')
@@ -542,7 +577,7 @@ class CLEOS:
             'name': 'setabi',
             'data': [
                 account_name,
-                json.dumps(abi).encode('utf-8')
+                abi.encode()
             ],
             'authorization': [{
                 'actor': account_name,
@@ -587,8 +622,8 @@ class CLEOS:
             wasm = wasm_file.read()
 
         abi = None
-        with open(contract_path / f'{contract_name}.abi', 'rb') as abi_file:
-            abi = json_module.load(abi_file)
+        with open(contract_path / f'{contract_name}.abi', 'r') as abi_file:
+            abi = ABI.from_str(abi_file.read())
 
         return self.deploy_contract(
             account_name, wasm, abi, **kwargs)
@@ -629,7 +664,7 @@ class CLEOS:
 
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: str, encode: bool = False) -> dict | bytes:
+    def get_abi(self, account_name: str) -> ABI:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
         :param account_name: Account to get the ABI for
@@ -644,12 +679,7 @@ class CLEOS:
             }
         )
 
-        resp = resp['abi']
-
-        if encode:
-            resp = json.dumps(resp).encode('utf-8')
-
-        return resp
+        return ABI.from_str(json.dumps(resp['abi']))
 
     def create_snapshot(self, body: dict):
         '''Create a snapshot, must have producer_plugin_api enabled
@@ -776,7 +806,7 @@ class CLEOS:
             wasm_file.write(wasm)
 
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
-            abi_file.write(json_module.dumps(abi))
+            abi_file.write(str(abi))
 
     def set_blockchain_parameters(self, params: dict):
         return self.push_action(

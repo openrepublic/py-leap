@@ -126,7 +126,7 @@
                 },
                 {
                     "name": "memo",
-                    "type": "string"
+                    "type": "bytes"
                 }
             ]
         }

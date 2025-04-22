@@ -18,19 +18,19 @@ from typing import Callable
 from contextlib import asynccontextmanager as acm
 
 import trio
-import msgspec
-import antelope_rs
 from trio_websocket import open_websocket_url
 
-from leap.ship.decoder import BlockDecoder
-from leap.ship.structs import (
+from leap.abis import standard
+
+from .decoder import BlockDecoder
+from .structs import (
     StateHistoryArgs,
     GetStatusRequestV0,
     GetBlocksRequestV0,
-    GetBlocksResultV0,
     GetBlocksAckRequestV0,
 )
-from leap.ship._benchmark import BenchmarkedBlockReceiver
+from ._benchmark import BenchmarkedBlockReceiver
+from ._utils import ResultFilter
 
 
 class BlockReceiver(BenchmarkedBlockReceiver):
@@ -47,6 +47,7 @@ async def open_state_history(
     sh_args = StateHistoryArgs.from_dict(sh_args)
 
     decoder = BlockDecoder(sh_args)
+    rfilter = ResultFilter(sh_args)
 
     send_chan, recv_chan = trio.open_memory_channel(0)
 
@@ -67,26 +68,38 @@ async def open_state_history(
                 while True:
                     # receive get_blocks_result
                     result_bytes = await ws.get_message()
-                    result = antelope_rs.abi_unpack('std', 'result', result_bytes)
-                    result = msgspec.convert(result, type=GetBlocksResultV0)
+                    result_bytes = result_bytes[1:]  # discard variant index
 
-                    block = decoder.decode_block_result(result)
-                    block['ws_index'] = msg_index
-                    block['ws_size'] = len(result_bytes)
+                    result: dict
+                    if rfilter.is_relevant(result_bytes):
+                        result = standard.unpack('result', result_bytes)
+                        decoder.decode_result_dict(result)
 
-                    await send_chan.send([block])
+                    else:
+                        result = standard.unpack(
+                            'get_blocks_result_v0_header', result_bytes
+                        )
+
+                    meta = {}
+                    meta['ws_index'] = msg_index
+
+                    if sh_args.block_meta:
+                        meta['ws_size'] = len(result_bytes)
+
+                    result['meta'] = meta
+
+                    await send_chan.send([result])
 
                     msg_index += 1
 
-                    block_num = result.this_block.block_num
+                    block_num = result['this_block']['block_num']
                     if block_num == sh_args.end_block_num - 1:
                         break
 
                     if acked_block == block_num:
                         # ack next batch of messages
                         await ws.send_message(
-                            antelope_rs.abi_pack(
-                                'std',
+                            standard.pack(
                                 'request',
                                 GetBlocksAckRequestV0(
                                     num_messages=sh_args.max_messages_in_flight
@@ -102,16 +115,15 @@ async def open_state_history(
 
         # send get_status_request
         await ws.send_message(
-            antelope_rs.abi_pack('std', 'request', GetStatusRequestV0().to_dict()))
+            standard.pack('request', GetStatusRequestV0().to_dict()))
 
         # receive get_status_result
         status_result_bytes = await ws.get_message()
-        status = antelope_rs.abi_unpack('std', 'result', status_result_bytes)
+        status = standard.unpack('result', status_result_bytes)
         logging.info(status)
 
         # send get_blocks_request
-        get_blocks_msg = antelope_rs.abi_pack(
-            'std',
+        get_blocks_msg = standard.pack(
             'request',
             GetBlocksRequestV0(
                 start_block_num= sh_args.start_block_num,

@@ -46,7 +46,8 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
 
         self._current_sample = Sample()
         self._last_sample_time = time.time()
-        self._last_block_num: int = -1
+        self._last_block_num: int = self._args.start_block_num - 1
+        self._last_index: int = -1
 
         self._avg_time = int(
             self._args.benchmark_sample_time * self._args.benchmark_max_samples
@@ -65,14 +66,31 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
                 self._start_time = now
 
             batch_size = len(batch)
-            txs = sum([
-                len(block['traces'])
-                for block in batch
-            ])
-            tables = sum([
-                len(block['deltas'])
-                for block in batch
-            ])
+            txs = 0
+            tables = 0
+            prev_block_num = self._last_block_num
+            prev_index = self._last_index
+            for block in batch:
+                txs += len(block['traces']) if 'traces' in block else 0
+                tables += len(block['deltas']) if 'deltas' in block else 0
+
+                if self._args.output_validate:
+                    block_num = block['this_block']['block_num']
+                    ws_index = block['meta']['ws_index']
+
+                    try:
+                        assert block_num == prev_block_num + 1
+                        assert ws_index == prev_index + 1
+                        prev_block_num = block_num
+                        prev_index = ws_index
+
+                    except AssertionError as e:
+                        e.add_note(
+                            f'sequence mismatch!:\n'
+                            f'block nums -> prev: {prev_block_num}, current: {block_num}'
+                            f'ws_index -> prev: {prev_index}, current: {ws_index}'
+                        )
+                        raise
 
             self._current_sample.blocks += batch_size
             self._current_sample.txs += txs
@@ -80,7 +98,10 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
 
             self._total_blocks_sampled += batch_size
 
-            self._last_block_num = batch[-1]['this_block']['block_num']
+            last_block = batch[-1]
+            self._last_block_num = last_block['this_block']['block_num']
+
+            self._last_index = last_block['meta']['ws_index']
 
             delta = now - self._last_sample_time
             if delta >= self._args.benchmark_sample_time:
@@ -114,6 +135,7 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
                         f'{self._avg_delta:,.2f} sec avg sample delta, '
                         f'{self._avg_block_speed:,} b/s '
                         f'{self._avg_tx_speed:,} tx/s '
+                        f'{self._avg_table_speed:,} deltas/s '
                         f'{self._avg_time} sec avg, '
                         f'{self.average_speed_since_start:,} b/s all time'
                     )
@@ -154,25 +176,6 @@ class BenchmarkedBlockReceiver(trio.abc.ReceiveChannel):
             last_block = batch[-1]
 
             last_block_num = last_block['this_block']['block_num']
-
-            if self._args.output_validate:
-                for block in batch:
-                    block_num = block['this_block']['block_num']
-                    ws_index = block['ws_index']
-
-                    try:
-                        assert block_num == _prev_block_num + 1
-                        assert ws_index == _prev_index + 1
-                        _prev_block_num = block_num
-                        _prev_index = ws_index
-
-                    except AssertionError as e:
-                        e.add_note(
-                            f'sequence mismatch!:\n'
-                            f'block nums -> prev: {_prev_block_num}, current: {block_num}'
-                            f'ws_index -> prev: {_prev_index}, current: {ws_index}'
-                        )
-                        raise
 
             if self._args.output_convert:
                 try:

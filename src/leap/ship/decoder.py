@@ -14,11 +14,13 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import json
-from base64 import b64decode
-
 import msgspec
-import antelope_rs
+from antelope_rs import PanicException
 
+from leap.abis import (
+    ABI,
+    standard
+)
 from leap.sugar import LeapJSONEncoder
 from leap.ship.structs import (
     OutputFormats,
@@ -42,21 +44,30 @@ class BlockDecoder:
         self.action_whitelist = Whitelist.from_dict(self.sh_args.action_whitelist)
         self.delta_whitelist = Whitelist.from_dict(self.sh_args.delta_whitelist)
 
-        for account, abi in self._contracts.items():
-            antelope_rs.load_abi(account, abi)
+    def get_abi(self, account: str) -> ABI:
+        return self._contracts[account]
 
-    def decode_traces(self, raw: bytes) -> dict:
+    def decode_traces(self, raw: bytes) -> tuple[int, dict | list]:
         '''
         Get an antelope formated `transaction_trace[]` payload
         and decode relevant data.
 
         '''
-        msgpack_traces = antelope_rs.abi_unpack_msgpack(
-            'std',
-            'transaction_trace[]',
-            raw
-        )
-        traces: list[dict] = msgspec.msgpack.decode(msgpack_traces)
+        try:
+            traces: list[dict] = standard.unpack(
+                'transaction_trace[]',
+                raw
+            )
+
+        except* PanicException as e:
+            e.add_note('while decoding transaction_trace[]')
+            raise RuntimeError from e
+
+        except* Exception as e:
+            e.add_note('while decoding transaction_trace[]')
+            raise e
+
+        og_size = len(traces)
         ret = []
 
         for trace in traces:
@@ -70,31 +81,45 @@ class BlockDecoder:
                     ret.append(act_trace)
 
                 try:
-                    act_trace['act']['data'] = action.decode()
+                    act_trace['act']['data'] = action.decode(
+                        self.get_abi(action.account)
+                    )
 
                 except* Exception as e:
                     e.add_note(f'while decoding action trace {action}')
                     raise e
 
         return (
-            ret
-            if self.sh_args.output_format == OutputFormats.OPTIMIZED
-            else
-            traces
+            og_size,
+            (
+                ret
+                if self.sh_args.output_format == OutputFormats.OPTIMIZED
+                else
+                traces
+            )
         )
 
-    def decode_deltas(self, raw: bytes) -> dict:
+    def decode_deltas(self, raw: bytes) -> tuple[int, dict | list]:
         '''
         Get an antelope formated `table_delta[]` payload
         and decode relevant data.
 
         '''
-        msgpack_deltas = antelope_rs.abi_unpack_msgpack(
-            'std',
-            'table_delta[]',
-            raw
-        )
-        deltas: list[dict] = msgspec.msgpack.decode(msgpack_deltas)
+        try:
+            deltas: list[dict] = standard.unpack(
+                'table_delta[]',
+                raw
+            )
+
+        except* PanicException as e:
+            e.add_note('while decoding transaction_trace[]')
+            raise RuntimeError from e
+
+        except* Exception as e:
+            e.add_note('while decoding table_delta[]')
+            raise e
+
+        og_size = len(deltas)
         ret = {}
 
         def ret_add_delta(name: str, row: dict):
@@ -114,7 +139,10 @@ class BlockDecoder:
                             continue
 
                         try:
-                            account_row = AccountV0.from_b64(row['data'])
+                            account_row = AccountV0.from_antelope_raw(
+                                row['data'],
+                                'account'
+                            )
                             row['data'] = account_row
 
                         except* Exception as e:
@@ -125,26 +153,26 @@ class BlockDecoder:
                             continue
 
                         if len(account_row.abi) > 0:
-                            abi = antelope_rs.abi_unpack('std', 'abi', account_row.abi)
-                            antelope_rs.load_abi(
-                                account_row.name,
-                                json.dumps(abi, cls=LeapJSONEncoder).encode('utf-8')
-                            )
+                            abi = ABI.from_bytes(account_row.abi)
+                            self._contracts[account_row.name] = abi
 
                     case 'contract_row':
-                        contract_row = RawContractRowV0.from_b64(row['data'])
-
-                        if not self.delta_whitelist.is_relevant(contract_row):
-                            if self.sh_args.output_format == OutputFormats.STANDARD:
-                                row['data'] = contract_row.to_dict()
-
-                            continue
-
-                        if self.sh_args.output_format == OutputFormats.OPTIMIZED:
-                            ret_add_delta(name, row)
-
                         try:
-                            row['data'] = contract_row.decode()
+                            contract_row = RawContractRowV0.from_antelope_raw(
+                                row['data'],
+                                'contract_row'
+                            )
+
+                            if not self.delta_whitelist.is_relevant(contract_row):
+                                if self.sh_args.output_format == OutputFormats.STANDARD:
+                                    row['data'] = contract_row.to_dict()
+
+                                continue
+
+                            if self.sh_args.output_format == OutputFormats.OPTIMIZED:
+                                ret_add_delta(name, row)
+
+                            row['data'] = contract_row.decode(self.get_abi(contract_row.code))
 
                         except* Exception as e:
                             e.add_note(f'while decoding table delta {row}')
@@ -162,10 +190,9 @@ class BlockDecoder:
                             continue
 
                         try:
-                            table_meta = antelope_rs.abi_unpack(
-                                'std',
+                            table_meta = standard.unpack(
                                 name,
-                                b64decode(row['data'])
+                                row['data']
                             )
                             row['data'] = table_meta
 
@@ -176,43 +203,39 @@ class BlockDecoder:
 
 
         return (
-            ret
-            if self.sh_args.output_format == OutputFormats.OPTIMIZED
-            else
-            deltas
+            og_size,
+            (
+                ret
+                if self.sh_args.output_format == OutputFormats.OPTIMIZED
+                else
+                deltas
+            )
         )
 
-    def decode_block_result(self, result: GetBlocksResultV0) -> dict:
-        _result = {
-            'head': result.head.to_dict(),
-            'last_irreversible': result.last_irreversible.to_dict(),
-            'this_block': result.this_block.to_dict(),
-            'prev_block': result.prev_block.to_dict(),
-            'block': None,
-            'traces': None,
-            'deltas': None
-        }
+    def decode_result_dict(self, result: dict) -> tuple[int, int]:
         try:
             if self.sh_args.fetch_block:
-                _result['block'] = antelope_rs.abi_unpack(
-                    'std',
+                result['block'] = standard.unpack(
                     'signed_block',
-                    result.block
+                    result['block']
                 )
 
+            og_traces = 0
+            og_deltas = 0
+
             if self.sh_args.fetch_traces:
-                _result['traces'] = self.decode_traces(result.traces)
+                og_traces, result['traces'] = self.decode_traces(result['traces'])
 
             if self.sh_args.fetch_deltas:
-                _result['deltas'] = self.decode_deltas(result.deltas)
+                og_deltas, result['deltas'] = self.decode_deltas(result['deltas'])
 
-            return _result
+            return og_traces, og_deltas
 
         except* Exception as e:
             e.add_note(
                 'while decoding block:\n' +
                 json.dumps(
-                    _result,
+                    result,
                     indent=4,
                     cls=LeapJSONEncoder
                 )

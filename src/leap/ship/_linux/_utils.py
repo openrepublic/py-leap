@@ -1,8 +1,15 @@
 import importlib
+from heapq import (
+    heappush,
+    heappop
+)
+from typing import Callable
 
+import trio
 import tractor
 import msgspec
 
+from ..structs import StateHistoryArgs
 from .._benchmark import BenchmarkedBlockReceiver
 
 
@@ -43,9 +50,62 @@ get_console_log = tractor.log.get_console_log
 
 
 class BlockReceiver(BenchmarkedBlockReceiver):
+    def __init__(
+        self,
+        rchan: trio.abc.ReceiveChannel,
+        sh_args: StateHistoryArgs,
+        log_fn: Callable | None = None
+    ):
+        super().__init__(rchan, sh_args, log_fn=log_fn)
+
+        self.next_index = 0
+        self.pq: list[tuple[int, dict]] = []
+
+    def push_all(self, blocks: list[dict]):
+        for block in blocks:
+            ws_index = block['meta']['ws_index']
+            heappush(
+                self.pq,
+                (
+                    ws_index,
+                    block
+                )
+            )
+            # print(f'got {ws_index} need {self.next_index}')
+
+    def can_pop_next(self) -> bool:
+        '''
+        Predicate to check if we have next in order block on pqueue.
+
+        '''
+        return (
+            len(self.pq) > 0
+            and
+            self.pq[0][0] == self.next_index
+        )
+
+    def pop_next(self) -> dict:
+        '''
+        Pop first block from pqueue.
+
+        '''
+        _, msg = heappop(self.pq)
+        self.next_index += 1
+        return msg
+
     async def _receiver(self):
-        async for batch in self._rchan:
-            yield msgspec.msgpack.decode(batch)
+        async for blocks in self._rchan:
+            self.push_all(blocks)
+
+            block_batch = []
+            while self.can_pop_next():
+                block_batch.append(self.pop_next())
+
+            # no ready blocks
+            if len(block_batch) == 0:
+                continue
+
+            yield block_batch
 
 
 def import_module_path(path: str):

@@ -263,6 +263,27 @@
             ]
         },
         {
+            "name": "get_blocks_result_v0_header",
+            "fields": [
+                {
+                    "name": "head",
+                    "type": "block_position"
+                },
+                {
+                    "name": "last_irreversible",
+                    "type": "block_position"
+                },
+                {
+                    "name": "this_block",
+                    "type": "block_position?"
+                },
+                {
+                    "name": "prev_block",
+                    "type": "block_position?"
+                }
+            ]
+        },
+        {
             "name": "get_blocks_result_v0",
             "fields": [
                 {
@@ -483,7 +504,7 @@
                 },
                 {
                     "name": "console",
-                    "type": "string"
+                    "type": "bytes"
                 },
                 {
                     "name": "account_ram_deltas",

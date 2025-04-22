@@ -2,7 +2,8 @@
 let
   nativeBuildInputs = with pkgs; [
     psmisc
-    openssl pkg-config
+    openssl
+    pkg-config
     stdenv.cc.cc.lib
     uv
   ];
