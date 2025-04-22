@@ -23,7 +23,13 @@ import logging
 
 from pathlib import Path
 
-from leap.protocol import Name, SymbolCode, Symbol, Asset
+from leap.protocol import (
+    ABI,
+    Name,
+    SymbolCode,
+    Symbol,
+    Asset
+)
 
 
 #
@@ -173,10 +179,6 @@ def download_latest_snapshot(
     block_num = int((filename.split('-')[-1]).split('.')[0])
 
     return block_num, dec_file_path
-
-
-import os
-import logging
 
 
 def download_with_progress_bar(url: str, file_path: Path) -> None:

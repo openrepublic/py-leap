@@ -13,14 +13,15 @@
 
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
-import json
 from pathlib import Path
 
 import antelope_rs
 
+ABI = antelope_rs.ABI
 
-def _load_abi_file(p: Path) -> bytes:
-    with open(p, 'rb') as file:
+
+def _load_abi_file(p: Path) -> str:
+    with open(p, 'r') as file:
         return file.read()
 
 package_dir = Path(__file__).parent
@@ -33,17 +34,18 @@ ABI_PATHS: dict[str, Path] = {
 }
 
 
-RAW_ABIS: dict[str, bytes] = {
+ABI_STRINGS: dict[str, str] = {
     account: _load_abi_file(abi_path)
     for account, abi_path in ABI_PATHS.items()
 }
 
 
-for account, abi in RAW_ABIS.items():
-    antelope_rs.load_abi(account, abi)
-
-
-ABIS: dict[str, dict] = {
-    account: json.loads(abi_raw.decode('utf-8'))
-    for account, abi_raw in RAW_ABIS.items()
+ABIS: dict[str, ABI] = {
+    account: ABI.from_str(abi_str)
+    for account, abi_str in ABI_STRINGS.items()
 }
+
+
+standard = ABIS['std']
+system = ABIS['eosio']
+token = ABIS['eosio.token']

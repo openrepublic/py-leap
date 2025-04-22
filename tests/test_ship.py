@@ -3,6 +3,7 @@ import json
 import trio
 import pytest
 
+from leap.abis import token
 from leap.ship import open_state_history
 from leap.sugar import LeapJSONEncoder
 from leap.ship.structs import OutputFormats
@@ -11,9 +12,23 @@ from leap.ship.structs import OutputFormats
 @pytest.mark.parametrize(
     'fetch_block,fetch_traces,fetch_deltas,start_contracts,action_whitelist,delta_whitelist,decode_meta,output_format',
     [
-        (True, True, True, {}, None, None, True, OutputFormats.OPTIMIZED),
+        (
+            True, True, True,
+            {'eosio.token': token},
+            {'eosio.token': ['transfer']},
+            {'eosio.token': ['stat', 'accounts']},
+            True,
+            OutputFormats.OPTIMIZED
+        ),
 
-        (True, True, True, {}, None, None, True, OutputFormats.STANDARD)
+        (
+            True, True, True,
+            {'eosio.token': token},
+            {'eosio.token': ['transfer']},
+            {'eosio.token': ['stat', 'accounts']},
+            True,
+            OutputFormats.STANDARD
+        ),
     ],
     ids=[
         'general_case_optimized',

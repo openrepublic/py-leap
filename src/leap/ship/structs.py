@@ -15,14 +15,21 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from __future__ import annotations
 import enum
-from base64 import b64decode
+import platform
 import msgspec
 from msgspec import (
     Struct,
     to_builtins
 )
 
-import antelope_rs
+from leap.abis import (
+    ABI,
+    standard
+)
+
+leap_dec_hook = None
+if platform.system() == 'Linux':
+    from leap.protocol import leap_dec_hook
 
 
 class OutputFormats(enum.StrEnum):
@@ -41,7 +48,7 @@ class StateHistoryArgs(Struct, frozen=True):
     fetch_traces: bool = False
     fetch_deltas: bool = False
 
-    start_contracts: dict[str, bytes] = {}
+    start_contracts: dict[str, ABI] = {}
     action_whitelist: dict[str, list[str]] | None = {}
     delta_whitelist: dict[str, list[str]] | None = {}
 
@@ -59,7 +66,11 @@ class StateHistoryArgs(Struct, frozen=True):
         if isinstance(msg, StateHistoryArgs):
             return msg
 
-        return StateHistoryArgs(**msg)
+        return msgspec.convert(
+            msg,
+            type=StateHistoryArgs,
+            dec_hook=leap_dec_hook
+        )
 
 
 class BlockPosition(Struct, frozen=True):
@@ -70,8 +81,8 @@ class BlockPosition(Struct, frozen=True):
 class GetBlocksResultV0(Struct, frozen=True):
     head: BlockPosition
     last_irreversible: BlockPosition
-    this_block: BlockPosition
-    prev_block: BlockPosition
+    this_block: BlockPosition | None
+    prev_block: BlockPosition | None
     block: bytes | None = None
     traces: bytes | None = None
     deltas: bytes | None = None
@@ -138,9 +149,8 @@ class Action(msgspec.Struct, frozen=True):
     authorization: list[PermissionLevel]
     data: bytes
 
-    def decode(self) -> dict:
-        return antelope_rs.abi_unpack(
-            self.account,
+    def decode(self, abi: ABI) -> dict:
+        return abi.unpack(
             self.name,
             self.data
         )
@@ -158,11 +168,10 @@ class AccountRow(Struct, frozen=True):
         return to_builtins(self)
 
     @classmethod
-    def from_b64(self, raw: str) -> AccountRow:
-        _dtype, row = antelope_rs.abi_unpack(
-            'std',
+    def from_bytes(self, raw: str) -> AccountRow:
+        row = standard.unpack(
             'account',
-            b64decode(raw)
+            raw
         )
         return msgspec.convert(row, type=AccountRow)
 
@@ -179,23 +188,21 @@ class ContractRow(Struct, frozen=True):
         return to_builtins(self)
 
     @classmethod
-    def from_b64(self, raw: str) -> ContractRow:
-        _dtype, row = antelope_rs.abi_unpack(
-            'std',
+    def from_bytes(self, raw: str) -> AccountRow:
+        row = standard.unpack(
             'contract_row',
-            b64decode(raw)
+            raw
         )
         return msgspec.convert(row, type=ContractRow)
 
-    def decode(self) -> dict:
+    def decode(self, abi: ABI) -> dict:
         return {
             'code': self.code,
             'scope': self.scope,
             'table': self.table,
             'primary_key': self.primary_key,
             'payer': self.payer,
-            'value': antelope_rs.abi_unpack(
-                self.code,
+            'value': abi.unpack(
                 self.table,
                 self.value
             )
