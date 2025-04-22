@@ -12,7 +12,7 @@ async def _main():
 
     cleos = CLEOS(endpoint=http_endpoint)
 
-    token_abi = cleos.get_abi('eosio.token')
+    token_abi = cleos.get_abi('eosio.token', convert=True)
 
     buckets: list[int] = []
     current_bucket = 0
@@ -26,8 +26,8 @@ async def _main():
             'fetch_traces': True,
             'fetch_deltas': True,
             'start_contracts': {'eosio.token': token_abi},
-            'action_whitelist': {'eosio.token': ['*']},
-            'delta_whitelist': {'eosio.token': ['*']}
+            'action_whitelist': {'eosio.token': ['transfer']},
+            'delta_whitelist': {'eosio.token': ['accounts']}
         }
     ) as block_chan:
         async for block in block_chan:

@@ -664,7 +664,7 @@ class CLEOS:
 
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: str) -> dict:
+    def get_abi(self, account_name: str, convert: bool = False) -> dict:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
         :param account_name: Account to get the ABI for
@@ -679,7 +679,11 @@ class CLEOS:
             }
         )
 
-        return ABI.from_str(json_module.dumps(resp['abi']))
+        resp = resp['abi']
+        if convert:
+            return ABI.from_str(json.dumps(resp))
+
+        return resp
 
     def create_snapshot(self, body: dict):
         '''Create a snapshot, must have producer_plugin_api enabled
@@ -806,7 +810,7 @@ class CLEOS:
             wasm_file.write(wasm)
 
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
-            abi_file.write(json_module.dumps(abi))
+            abi_file.write(json.dumps(abi, indent=4))
 
     def set_blockchain_parameters(self, params: dict):
         return self.push_action(
