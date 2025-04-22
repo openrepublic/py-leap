@@ -15,6 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from __future__ import annotations
 import enum
+import platform
 import msgspec
 from msgspec import (
     Struct,
@@ -25,7 +26,10 @@ from leap.abis import (
     ABI,
     standard
 )
-from leap.protocol import leap_dec_hook
+
+leap_dec_hook = None
+if platform.system() == 'Linux':
+    from leap.protocol import leap_dec_hook
 
 
 class OutputFormats(enum.StrEnum):

@@ -15,20 +15,12 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import time
 import struct
+import platform
 from typing import TypeVar, Generic
 from contextlib import contextmanager as cm
 
 import antelope_rs
 from msgspec import Struct
-from tractor.msg._codec import (
-    mk_codec_from_spec,
-    apply_codec
-)
-from tractor.msg._codec import (
-    default_builtins,
-    mk_dec_hook,
-)
-from tractor.msg._ops import limit_plds
 
 
 Name = antelope_rs.Name
@@ -47,24 +39,35 @@ antelope_types = (
 )
 
 
-leap_dec_hook = mk_dec_hook(antelope_types)
-leap_codec = mk_codec_from_spec(antelope_types)
+if platform.system() == 'Linux':
+    from tractor.msg._codec import (
+        mk_codec_from_spec,
+        apply_codec
+    )
+    from tractor.msg._codec import (
+        default_builtins,
+        mk_dec_hook,
+    )
+    from tractor.msg._ops import limit_plds
+
+    leap_dec_hook = mk_dec_hook(antelope_types)
+    leap_codec = mk_codec_from_spec(antelope_types)
 
 
-@cm
-def apply_leap_codec(ctx=None):
-    with apply_codec(leap_codec, ctx=ctx):
-        yield
+    @cm
+    def apply_leap_codec(ctx=None):
+        with apply_codec(leap_codec, ctx=ctx):
+            yield
 
 
-@cm
-def limit_leap_plds():
-    with limit_plds(
-        leap_codec.pld_spec,
-        dec_hook=leap_dec_hook,
-        ext_types=antelope_types + default_builtins,
-    ) as pld_dec:
-        yield pld_dec
+    @cm
+    def limit_leap_plds():
+        with limit_plds(
+            leap_codec.pld_spec,
+            dec_hook=leap_dec_hook,
+            ext_types=antelope_types + default_builtins,
+        ) as pld_dec:
+            yield pld_dec
 
 
 def endian_reverse_u32(x: int) -> int:
