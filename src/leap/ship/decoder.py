@@ -14,12 +14,10 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 import json
-from base64 import b64decode
-
 import msgspec
-import antelope_rs
 
-from leap.sugar import LeapJSONEncoder
+from leap.abis import standard
+from leap.protocol import ABI
 from leap.ship.structs import (
     OutputFormats,
     StateHistoryArgs,
@@ -41,10 +39,7 @@ class BlockDecoder:
         self.action_whitelist = Whitelist.from_msg(self.sh_args.action_whitelist)
         self.delta_whitelist = Whitelist.from_msg(self.sh_args.delta_whitelist)
 
-        for account, abi in self._contracts.items():
-            antelope_rs.load_abi(account, abi)
-
-    def decode_traces(self, raw: bytes) -> bytes:
+    def decode_traces(self, raw: bytes) -> list[dict]:
         '''
         Get an antelope formated `transaction_trace[]` payload
         and decode relevant data.
@@ -52,16 +47,14 @@ class BlockDecoder:
         Return msgpack encoded result.
 
         '''
-        msgpack_traces = antelope_rs.abi_unpack_msgspec(
-            'std',
+        traces: list[dict] = standard.unpack(
             'transaction_trace[]',
             raw
         )
-        traces: list[tuple[str, dict]] = msgspec.msgpack.decode(msgpack_traces)
         ret = []
 
-        for _type, trace in traces:
-            for act_type, act_trace in trace['action_traces']:
+        for trace in traces:
+            for act_trace in trace['action_traces']:
                 action = msgspec.convert(act_trace['act'], type=Action)
 
                 if not self.action_whitelist.is_relevant(action):
@@ -71,20 +64,20 @@ class BlockDecoder:
                     ret.append(act_trace)
 
                 try:
-                    act_trace['act']['data'] = action.decode()
+                    act_trace['act']['data'] = action.decode(self._contracts[action.account])
 
                 except* Exception as e:
                     e.add_note(f'while decoding action trace {action}')
                     raise e
 
-        return msgspec.msgpack.encode(
+        return (
             ret
             if self.sh_args.output_format == OutputFormats.OPTIMIZED
             else
             traces
         )
 
-    def decode_deltas(self, raw: bytes) -> bytes:
+    def decode_deltas(self, raw: bytes) -> list[dict]:
         '''
         Get an antelope formated `table_delta[]` payload
         and decode relevant data.
@@ -92,12 +85,10 @@ class BlockDecoder:
         Return msgpack encoded result.
 
         '''
-        msgpack_deltas = antelope_rs.abi_unpack_msgspec(
-            'std',
+        deltas: list[dict] = standard.unpack(
             'table_delta[]',
             raw
         )
-        deltas: list[tuple[str, dict]] = msgspec.msgpack.decode(msgpack_deltas)
         ret = {}
 
         def ret_add_delta(name: str, row: dict):
@@ -106,7 +97,7 @@ class BlockDecoder:
 
             ret[name].append(row)
 
-        for delta_type, delta in deltas:
+        for delta in deltas:
             rows = delta['rows']
             name = delta['name']
 
@@ -116,25 +107,22 @@ class BlockDecoder:
                         if not row['present'] or not self.sh_args.decode_abis:
                             continue
 
-                        account_row = AccountRow.from_b64(row['data'])
+                        account_row = AccountRow.from_bytes(row['data'])
 
                         if account_row.name not in self._contracts:
                             continue
 
-                        row_data = row['data']
                         if len(account_row.abi) > 0:
-                            abi = antelope_rs.abi_unpack('std', 'abi', (account_row.abi))
-                            antelope_rs.load_abi(
-                                account_row.name,
-                                json.dumps(abi, cls=LeapJSONEncoder).encode('utf-8')
+                            abi = standard.unpack(
+                                'abi',
+                                account_row.abi
                             )
-                            row_data = abi
+                            self._contracts[account_row.name] = ABI.from_str(json.dumps(abi))
 
-                        row['data'] = row_data
-
+                        row['data'] = str(abi)
 
                     case 'contract_row':
-                        contract_row = ContractRow.from_b64(row['data'])
+                        contract_row = ContractRow.from_bytes(row['data'])
 
                         if not self.delta_whitelist.is_relevant(contract_row):
                             if self.sh_args.output_format == OutputFormats.STANDARD:
@@ -146,7 +134,7 @@ class BlockDecoder:
                             ret_add_delta(name, row)
 
                         try:
-                            row['data'] = contract_row.decode()
+                            row['data'] = contract_row.decode(self._contracts[contract_row.code])
 
                         except* Exception as e:
                             e.add_note(f'while decoding table delta {row}')
@@ -164,10 +152,9 @@ class BlockDecoder:
                             continue
 
                         try:
-                            _dtype, table_meta = antelope_rs.abi_unpack(
-                                'std',
+                            table_meta = standard.unpack(
                                 name,
-                                b64decode(row['data'])
+                                row['data']
                             )
                             row['data'] = table_meta
 
@@ -177,7 +164,7 @@ class BlockDecoder:
 
 
 
-        return msgspec.msgpack.encode(
+        return (
             ret
             if self.sh_args.output_format == OutputFormats.OPTIMIZED
             else

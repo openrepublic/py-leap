@@ -18,9 +18,9 @@ from contextlib import asynccontextmanager as acm
 
 import trio
 import msgspec
-import antelope_rs
 from trio_websocket import open_websocket_url
 
+from leap.abis import standard
 from leap.ship.decoder import BlockDecoder
 from leap.ship.structs import (
     StateHistoryArgs,
@@ -41,8 +41,7 @@ def decode_block_result(
 
     try:
         if result.block:
-            sblock = antelope_rs.abi_unpack(
-                'std',
+            sblock = standard.unpack(
                 'signed_block',
                 result.block
             )
@@ -87,7 +86,7 @@ async def open_state_history(sh_args: StateHistoryArgs):
                 while block_num != sh_args.end_block_num - 1:
                     # receive get_blocks_result
                     result_bytes = await ws.get_message()
-                    _result_type, result = antelope_rs.abi_unpack('std', 'result', result_bytes)
+                    _result_type, result = standard.unpack('result', result_bytes)
                     block = decode_block_result(
                         msgspec.convert(result, type=GetBlocksResultV0),
                         decoder,
@@ -99,10 +98,14 @@ async def open_state_history(sh_args: StateHistoryArgs):
                     if acked_block == block_num:
                         # ack next batch of messages
                         await ws.send_message(
-                            antelope_rs.abi_pack(
-                                'std',
-                                'request', [
-                                    'get_blocks_ack_request_v0', {'num_messages': sh_args.max_messages_in_flight}]))
+                            standard.pack(
+                                'request',
+                                {
+                                    'type': 'get_blocks_ack_request_v0',
+                                    'num_messages': sh_args.max_messages_in_flight
+                                }
+                            )
+                        )
 
                         acked_block += sh_args.max_messages_in_flight
 
@@ -112,16 +115,15 @@ async def open_state_history(sh_args: StateHistoryArgs):
 
         # send get_status_request
         await ws.send_message(
-            antelope_rs.abi_pack('std', 'request', ['get_status_request_v0', {}]))
+            standard.pack('request', {'type': 'get_status_request_v0'}))
 
         # receive get_status_result
         status_result_bytes = await ws.get_message()
-        status = antelope_rs.abi_unpack('std', 'result', status_result_bytes)
+        status = standard.unpack('result', status_result_bytes)
         logging.info(status)
 
         # send get_blocks_request
-        get_blocks_msg = antelope_rs.abi_pack(
-            'std',
+        get_blocks_msg = standard.pack(
             'request',
             [
                 'get_blocks_request_v0',

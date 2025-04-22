@@ -27,22 +27,24 @@ from contextlib import (
 import trio
 import tractor
 import msgspec
-import antelope_rs
 from msgspec import (
     Struct,
     to_builtins
 )
-from tractor.ipc import (
+from tractor.ipc._ringbuf import (
     RBToken,
-    open_ringbuf,
-    RingBuffBytesReceiver,
-    attach_to_ringbuf_schannel,
-    attach_to_ringbuf_rchannel,
+    open_ringbuf_sync as open_ringbuf,
+    open_ringbuf_pair_sync as open_ringbuf_pair,
+    RingBufferReceiveChannel,
+    attach_to_ringbuf_sender,
+    attach_to_ringbuf_receiver,
     attach_to_ringbuf_channel,
 )
 from tractor.trionics import gather_contexts
 from trio_websocket import open_websocket_url
 
+from leap.abis import standard
+from leap.protocol import apply_leap_codec
 from leap.ship.structs import (
     StateHistoryArgs,
     GetBlocksResultV0,
@@ -85,17 +87,14 @@ class TaggedPayload(Struct, frozen=True):
     def encode(self) -> bytes:
         return msgspec.msgpack.encode(self)
 
-    def decode_antelope(self) -> bytes:
-        return antelope_rs.abi_unpack_msgspec(
-            'std',
+    def decode_antelope(self) -> any:
+        return standard.unpack(
             self.abi_type,
             self.data
         )
 
     def decode(self, type=None) -> any:
-        res = msgspec.msgpack.decode(
-            self.decode_antelope()
-        )
+        res = self.decode_antelope()
         if type:
             res = msgspec.convert(res, type=type)
 
@@ -134,6 +133,8 @@ async def block_joiner(
     wip_block_map: dict[int, dict] = {}
     ready_block_map: dict[int, dict] = {}
 
+    send_lock = trio.StrictFIFOLock()
+
     end_reached = trio.Event()
 
     def is_block_ready(block: dict) -> bool:
@@ -149,50 +150,51 @@ async def block_joiner(
 
     async with (
         trio.open_nursery() as n,
-        attach_to_ringbuf_schannel(out_token) as schan,
-        attach_to_ringbuf_schannel(ack_token) as ack_chan,
+        attach_to_ringbuf_sender(out_token) as schan,
+        attach_to_ringbuf_sender(ack_token) as ack_chan,
     ):
         async def _process_ready_block(index: int):
             nonlocal next_index, unacked_msgs
 
-            # remove from wip map and put in ready map
-            block = wip_block_map.pop(index)
-            ready_block_map[index] = block
+            async with send_lock:
+                # remove from wip map and put in ready map
+                block = wip_block_map.pop(index)
+                ready_block_map[index] = block
 
-            # remove all in-order blocks from ready map
-            block_batch = []
-            while next_index in ready_block_map:
-                next_block = ready_block_map.pop(next_index)
-                block_batch.append(next_block)
-                next_index += 1
+                # remove all in-order blocks from ready map
+                block_batch = []
+                while next_index in ready_block_map:
+                    next_block = ready_block_map.pop(next_index)
+                    block_batch.append(next_block)
+                    next_index += 1
 
-            # no ready blocks
-            if len(block_batch) == 0:
-                return
+                # no ready blocks
+                if len(block_batch) == 0:
+                    return
 
-            # send all ready blocks as a single batch
-            payload = msgspec.msgpack.encode(block_batch)
-            await schan.send(payload)
+                # send all ready blocks as a single batch
+                payload = msgspec.msgpack.encode(block_batch)
+                await schan.send(payload)
 
-            # maybe signal eof
-            last_block_num = block_batch[-1]['this_block']['block_num']
-            if last_block_num == sh_args.end_block_num - 1:
-                await ack_chan.send(b'')
-                await schan.send(b'')
-                end_reached.set()
-                return
+                # maybe signal eof
+                last_block_num = block_batch[-1]['this_block']['block_num']
+                if last_block_num == sh_args.end_block_num - 1:
+                    await ack_chan.send(b'')
+                    await schan.send(b'')
+                    end_reached.set()
+                    return
 
-            # maybe signal ws ack
-            unacked_msgs += len(block_batch)
-            if unacked_msgs >= sh_args.max_messages_in_flight:
-                await ack_chan.send(msgspec.msgpack.encode(AckMessage(
-                    last_block_num=last_block_num
-                )))
-                unacked_msgs = 0
+                # maybe signal ws ack
+                unacked_msgs += len(block_batch)
+                if unacked_msgs >= sh_args.max_messages_in_flight:
+                    await ack_chan.send(msgspec.msgpack.encode(AckMessage(
+                        last_block_num=last_block_num
+                    )))
+                    unacked_msgs = 0
 
 
         async def _input_reader(in_token: RBToken):
-            async with attach_to_ringbuf_rchannel(in_token) as rchan:
+            async with attach_to_ringbuf_receiver(in_token) as rchan:
                 async for msg in rchan:
                     payload = msgspec.msgpack.decode(msg, type=TaggedPayload)
 
@@ -257,7 +259,7 @@ async def generic_decoder(
                 TaggedPayload(
                     index=payload.index,
                     abi_type=payload.abi_type,
-                    data=result
+                    data=msgspec.msgpack.encode(result)
                 ).encode()
             )
 
@@ -283,10 +285,10 @@ async def result_decoder(
     '''
     async with (
         gather_contexts([
-            attach_to_ringbuf_schannel(token)
+            attach_to_ringbuf_sender(token)
             for token in outputs
         ]) as out_channels,
-        attach_to_ringbuf_rchannel(in_token) as rchan
+        attach_to_ringbuf_receiver(in_token) as rchan
     ):
         turn = cycle(range(len(outputs)))
 
@@ -363,7 +365,7 @@ async def ship_reader(
 
     async with (
         trio.open_nursery() as n,
-        attach_to_ringbuf_schannel(
+        attach_to_ringbuf_sender(
             out_token, batch_size=batch_size
         ) as schan,
         open_websocket_url(
@@ -377,29 +379,26 @@ async def ship_reader(
         log.info('got abi')
 
         # send get_status_request
-        await ws.send_message(antelope_rs.abi_pack('std', 'request', ['get_status_request_v0', {}]))
+        await ws.send_message(standard.pack('request', {'type': 'get_status_request_v0'}))
 
         # receive get_status_result
         status_result_bytes = await ws.get_message()
-        status = antelope_rs.abi_unpack('std', 'result', status_result_bytes)
+        status = standard.unpack('result', status_result_bytes)
         log.info(status)
         # send get_blocks_request
-        get_blocks_msg = antelope_rs.abi_pack(
-            'std',
+        get_blocks_msg = standard.pack(
             'request',
-            [
-                'get_blocks_request_v0',
-                {
-                    'start_block_num': sh_args.start_block_num,
-                    'end_block_num': sh_args.end_block_num,
-                    'max_messages_in_flight': sh_args.max_messages_in_flight,
-                    'have_positions': [],
-                    'irreversible_only': sh_args.irreversible_only,
-                    'fetch_block': sh_args.fetch_block,
-                    'fetch_traces': sh_args.fetch_traces,
-                    'fetch_deltas': sh_args.fetch_deltas
-                }
-            ]
+            {
+                'type': 'get_blocks_request_v0',
+                'start_block_num': sh_args.start_block_num,
+                'end_block_num': sh_args.end_block_num,
+                'max_messages_in_flight': sh_args.max_messages_in_flight,
+                'have_positions': [],
+                'irreversible_only': sh_args.irreversible_only,
+                'fetch_block': sh_args.fetch_block,
+                'fetch_traces': sh_args.fetch_traces,
+                'fetch_deltas': sh_args.fetch_deltas
+            }
         )
         await ws.send_message(get_blocks_msg)
 
@@ -409,7 +408,7 @@ async def ship_reader(
             on EOF set `end_reached` event.
 
             '''
-            async with attach_to_ringbuf_rchannel(ack_token) as ack_chan:
+            async with attach_to_ringbuf_receiver(ack_token) as ack_chan:
                 task_status.started()
                 async for msg in ack_chan:
                     msg = msgspec.msgpack.decode(msg, type=AckMessage)
@@ -419,13 +418,12 @@ async def ship_reader(
                         schan.batch_size = 1
 
                     await ws.send_message(
-                        antelope_rs.abi_pack(
-                            'std',
+                        standard.pack(
                             'request',
-                            [
-                                'get_blocks_ack_request_v0',
-                                {'num_messages': sh_args.max_messages_in_flight}
-                            ]
+                            {
+                                'type': 'get_blocks_ack_request_v0',
+                                'num_messages': sh_args.max_messages_in_flight
+                            }
                         )
                     )
 
@@ -462,7 +460,7 @@ class BlockReceiver(trio.abc.ReceiveChannel[Block]):
     Decode a stream of msgspack encoded `Block` structs
 
     '''
-    def __init__(self, rchan: RingBuffBytesReceiver):
+    def __init__(self, rchan: RingBufferReceiveChannel):
         self._rchan = rchan
         self._aiter = self._iterator()
 
@@ -523,48 +521,42 @@ async def open_state_history(
         'buf_size': int(sh_args.max_message_size * pref_args.max_msgs_per_buf)
     }
 
-    # create ring buffers
-    with (
-        ExitStack() as stack,
-        open_ringbuf(root_key + '.ship_reader', **common) as ship_token,
-        open_ringbuf(root_key + '.final', **common) as final_token,
-        open_ringbuf(root_key + '.ack') as ack_token
-    ):
-        # amount of decoders is dynamic, use an ExitStack
-        decoder_tokens = [
-            stack.enter_context(
-                tractor.ipc.open_ringbuf_pair(
-                    root_key + f'.decoder-{i}', buf_size=128 * 1024 * 1024
+    modules = [
+        __name__,
+        'tractor.linux._fdshare'
+    ]
+
+    async with tractor.open_nursery(
+        debug_mode=pref_args.debug_mode,
+        enable_modules=modules
+    ) as an:
+        with (
+            apply_leap_codec(),
+            ExitStack() as stack,
+            open_ringbuf(root_key + '.ship_reader', **common) as ship_token,
+            open_ringbuf(root_key + '.final', **common) as final_token,
+            open_ringbuf(root_key + '.ack') as ack_token
+        ):
+            # amount of decoders is dynamic, use an ExitStack
+            decoder_tokens = [
+                stack.enter_context(
+                    open_ringbuf_pair(
+                        root_key + f'.decoder-{i}', buf_size=128 * 1024 * 1024
+                    )
                 )
-            )
-            for i in range(pref_args.decoders)
-        ]
-
-        decoder_in_fds, decoder_out_fds = (
-            tuple(fd for i, _ in decoder_tokens for fd in i.fds),
-            tuple(fd for _, o in decoder_tokens for fd in o.fds)
-        )
-
-        # resources are ready, spawn sub-actors
-        # TODO: auto-pass fds automatically in tractor
-        async with tractor.open_nursery(debug_mode=pref_args.debug_mode) as an:
+                for i in range(pref_args.decoders)
+            ]
 
             # writes to ship_token, reads from ack_token
             ship_portal = await an.start_actor(
                 'ship_reader',
-                enable_modules=[__name__],
-                proc_kwargs={
-                    'pass_fds': ship_token.fds + ack_token.fds
-                }
+                enable_modules=modules,
             )
 
             # reads from ship_token, writes to all decoder_in_tokens
             result_decoder_portal = await an.start_actor(
                 'result_decoder',
-                enable_modules=[__name__],
-                proc_kwargs={
-                    'pass_fds': ship_token.fds + decoder_in_fds
-                }
+                enable_modules=modules,
             )
 
             # each decoder reads from its decoder_in_token and writes to
@@ -572,10 +564,7 @@ async def open_state_history(
             dec_portals = tuple([
                 await an.start_actor(
                     f'decoder-{i}',
-                    enable_modules=[__name__],
-                    proc_kwargs={
-                        'pass_fds': tokens[0].fds + tokens[1].fds
-                    }
+                    enable_modules=modules,
                 )
                 for i, tokens in enumerate(decoder_tokens)
             ])
@@ -583,10 +572,7 @@ async def open_state_history(
             # reads from all decoder_out_tokens, writes to ack_token and final_token
             joiner_portal = await an.start_actor(
                 'block_joiner',
-                enable_modules=[__name__],
-                proc_kwargs={
-                    'pass_fds': final_token.fds + decoder_out_fds + ack_token.fds
-                }
+                enable_modules=modules,
             )
 
             # all sub-actors spawned, open contexts on each of them
@@ -622,7 +608,7 @@ async def open_state_history(
                 ) as (joiner_ctx, _sent),
 
                 # finally attach root to final block channel
-                attach_to_ringbuf_rchannel(final_token) as rchan
+                attach_to_ringbuf_receiver(final_token) as rchan
             ):
                 yield BlockReceiver(rchan)
                 await joiner_ctx.cancel()
