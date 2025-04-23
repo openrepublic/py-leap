@@ -4,6 +4,9 @@ from leap.protocol import Asset, Symbol
 from leap.tokens import tlos_token
 
 
+def test_abi(cleos_w_testcontract):
+    assert cleos_w_testcontract.get_abi('testcontract'), "failed to fetch abi"
+
 def test_asset(cleos_w_testcontract):
     cleos = cleos_w_testcontract
     cleos.push_action(
@@ -72,3 +75,40 @@ def test_extended_asset(cleos_w_testcontract):
         ['1000.000000000 PUSDT@swap.libre', 'swap.libre', 1000 * (10 ** 9)],
         'testcontract'
     )
+
+
+def test_deploy_update(cleos_w_testcontract):
+    cleos = cleos_w_testcontract
+
+    abi = cleos.get_abi('testcontract')
+    assert abi
+
+    result = cleos.push_action(
+        'testcontract',
+        'testversion',
+        [420],
+        'testcontract'
+    )
+    output = result['processed']['action_traces'][0]['console']
+    assert output == 'v1\n420'
+
+    cleos.deploy_contract_from_path(
+        'testcontract',
+        'tests/contracts/testcontract/v2',
+        contract_name='testcontract',
+        create_account=False
+    )
+
+    cleos.wait_blocks(1)
+
+    abi = cleos.get_abi('testcontract')
+    assert abi
+
+    result = cleos.push_action(
+        'testcontract',
+        'testversion',
+        ['chungus', 420],
+        'testcontract'
+    )
+    output = result['processed']['action_traces'][0]['console']
+    assert output == 'v2\n420\nchungus'

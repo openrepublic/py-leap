@@ -26,3 +26,11 @@ void testcontract::checkripmd(const std::optional<checksum160>& val,  const stri
     auto hex_val = string_to_hex<20>(val->extract_as_byte_array());
     check(hex_val == check_str, hex_val + " != " + check_str);
 }
+
+void testcontract::testversion(const name test, const int64_t val) {
+    print(VERSION);
+    print("\n");
+    print(val);
+    print("\n");
+    print(test);
+}

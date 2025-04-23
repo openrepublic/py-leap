@@ -28,6 +28,7 @@ SymbolCode = antelope_rs.SymbolCode
 Symbol = antelope_rs.Symbol
 Asset = antelope_rs.Asset
 ABI = antelope_rs.ABI
+ShipABI = antelope_rs.ShipABI
 
 
 antelope_types = (
@@ -35,7 +36,9 @@ antelope_types = (
     SymbolCode,
     Symbol,
     Asset,
-    ABI
+
+    ABI,
+    ShipABI,
 )
 
 

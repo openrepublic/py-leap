@@ -20,7 +20,7 @@ def cleos_w_bootstrap(request, tmp_path_factory):
 @pytest.fixture(scope='module')
 def cleos_w_testcontract(request, tmp_path_factory):
     deploy_marker = pytest.mark.contracts(
-        testcontract='tests/contracts/testcontract')
+        testcontract='tests/contracts/testcontract/v1')
 
     request.applymarker(deploy_marker)
 

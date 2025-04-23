@@ -1,6 +1,8 @@
 { pkgs ? import <nixpkgs> {} }:
 let
   nativeBuildInputs = with pkgs; [
+    openssl
+    pkg-config
     stdenv.cc.cc.lib
     uv
   ];

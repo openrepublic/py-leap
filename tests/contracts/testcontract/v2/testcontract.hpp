@@ -2,6 +2,8 @@
 #include <eosio/asset.hpp>
 #include <eosio/singleton.hpp>
 
+#define VERSION "v2"
+
 using std::string;
 using std::to_string;
 
@@ -32,4 +34,7 @@ class [[eosio::contract]] testcontract : public contract {
 
         [[eosio::action]]
         void checkripmd(const std::optional<checksum160>& val, const string& check_str);
+
+        [[eosio::action]]
+        void testversion(const name test, const int64_t val);
 };
