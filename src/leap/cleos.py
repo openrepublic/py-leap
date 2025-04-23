@@ -112,22 +112,24 @@ class CLEOS:
     def load_abi(self, account: str, abi: ABI | dict | str | bytes):
         '''Load abi dict into internal store
         '''
-        if isinstance(abi, bytes):
-            abi = abi.decode()
-
         if isinstance(abi, dict):
             abi = json.dumps(abi)
 
         if isinstance(abi, str):
             abi = ABI.from_str(abi)
 
+        if isinstance(abi, bytes):
+            abi = ABI.from_bytes(abi)
+
         self._loaded_abis[account] = abi
+
+        return abi
 
     def load_abi_file(self, account: str, abi_path: str | Path):
         '''Load abi file into internal store
         '''
         with open(abi_path, 'r') as abi_file:
-            self.load_abi(account, abi_file.read())
+            return self.load_abi(account, abi_file.read())
 
     def get_loaded_abi(self, account: str) -> ABI:
         '''Return a previously loaded abi
@@ -496,7 +498,7 @@ class CLEOS:
         self,
         account_name: str,
         wasm: bytes,
-        abi: dict,
+        abi: ABI | dict | str | bytes | None = None,
         privileged: bool = False,
         create_account: bool = True,
         staked: bool = True
@@ -555,11 +557,6 @@ class CLEOS:
         local_shasum = sha256(wasm).hexdigest()
         self.logger.info(f'contract hash: {local_shasum}')
 
-        self.logger.info('loading abi...')
-        self.load_abi(account_name, abi)
-
-        self.logger.info('deploy...')
-
         actions = [{
             'account': 'eosio',
             'name': 'setcode',
@@ -572,18 +569,26 @@ class CLEOS:
                 'actor': account_name,
                 'permission': 'active'
             }]
-        }, {
-            'account': 'eosio',
-            'name': 'setabi',
-            'data': [
-                account_name,
-                json.dumps(abi).encode('utf-8')
-            ],
-            'authorization': [{
-                'actor': account_name,
-                'permission': 'active'
-            }]
         }]
+
+        if abi:
+            self.logger.info('loading abi...')
+            abi = self.load_abi(account_name, abi)
+
+            self.logger.info('deploy...')
+
+            actions.append({
+                'account': 'eosio',
+                'name': 'setabi',
+                'data': [
+                    account_name,
+                    abi.encode()
+                ],
+                'authorization': [{
+                    'actor': account_name,
+                    'permission': 'active'
+                }]
+            })
 
         try:
             res = self.push_actions(
@@ -600,6 +605,7 @@ class CLEOS:
         account_name: str,
         contract_path: str | Path,
         contract_name: str | None = None,
+        set_abi: bool = True,
         **kwargs
     ):
         '''Deploy a contract from a filesystem directory
@@ -622,11 +628,12 @@ class CLEOS:
             wasm = wasm_file.read()
 
         abi = None
-        with open(contract_path / f'{contract_name}.abi', 'r') as abi_file:
-            abi = json_module.loads(abi_file.read())
+        if set_abi:
+            with open(contract_path / f'{contract_name}.abi', 'r') as abi_file:
+                abi = abi_file.read()
 
         return self.deploy_contract(
-            account_name, wasm, abi, **kwargs)
+            account_name, wasm, abi=abi, **kwargs)
 
     def get_account(
         self,
@@ -641,16 +648,19 @@ class CLEOS:
             }
         )
 
-    def get_code(
+    def get_code_and_abi(
         self,
-        account_name: str
-    ) -> tuple[str, bytes]:
-        '''Fetches and decodes the WebAssembly (WASM) code for a given account.
+        account_name: str,
+        convert: bool = True
+    ) -> tuple[str, bytes, ABI | bytes]:
+        '''Fetches and decodes the WebAssembly (WASM) code and ABI for a given
+        account.
 
         :param account_name: Account to get the WASM code for
         :type account_name: str
-        :return: A tuple containing the hash and the decoded WASM code.
-        :rtype: tuple[str, bytes]
+        :return: A tuple containing the hash, the decoded WASM code and either
+            an ABI object or the raw abi bytes.
+        :rtype: tuple[str, bytes, ABI | bytes]
         '''
         resp = self._post(
             '/v1/chain/get_raw_code_and_abi',
@@ -662,28 +672,47 @@ class CLEOS:
         wasm = base64.b64decode(resp['wasm'])
         wasm_hash = sha256(wasm).hexdigest()
 
+        raw_abi = base64.b64decode(resp['abi'])
+
+        return (
+            wasm_hash,
+            wasm,
+            ABI.from_bytes(raw_abi) if convert else raw_abi
+        )
+
+    def get_code(
+        self,
+        account_name: str
+    ) -> tuple[str, bytes]:
+        '''Fetches and decodes the WebAssembly (WASM) code for a given account.
+
+        :param account_name: Account to get the WASM code for
+        :type account_name: str
+        :return: A tuple containing the hash and the decoded WASM code.
+        :rtype: tuple[str, bytes]
+        '''
+        wasm_hash, wasm, _ = self.get_code_and_abi(account_name, convert=False)
+
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: str, convert: bool = False) -> dict:
+    def get_abi(self, account_name: str, convert: bool = True) -> bytes | ABI:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
         :param account_name: Account to get the ABI for
         :type account_name: str
-        :return: An dictionary containing the ABI data.
-        :rtype: dict
+        :return: An ABI object if convert == True or the raw bytes.
+        :rtype: bytes | ABI
         '''
         resp = self._post(
-            '/v1/chain/get_abi',
+            '/v1/chain/get_raw_abi',
             json={
                 'account_name': account_name
             }
         )
 
-        resp = resp['abi']
-        if convert:
-            return ABI.from_str(json.dumps(resp))
+        raw_abi = base64.b64decode(resp['abi'])
 
-        return resp
+        return ABI.from_bytes(raw_abi) if convert else raw_abi
 
     def create_snapshot(self, body: dict):
         '''Create a snapshot, must have producer_plugin_api enabled
@@ -779,7 +808,7 @@ class CLEOS:
         account_name: str,
         download_location: str | Path,
         local_name: str | None = None,
-        abi: dict | None = None
+        abi: ABI | None = None
     ):
         '''Downloads the smart contract associated with a given account.
 
@@ -803,14 +832,14 @@ class CLEOS:
 
         _, wasm = self.get_code(account_name)
 
-        if not abi:
-            abi = self.get_abi(account_name)
-
         with open(download_location / f'{local_name}.wasm', 'wb+') as wasm_file:
             wasm_file.write(wasm)
 
+        if not abi:
+            abi = self.get_abi(account_name)
+
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
-            abi_file.write(json.dumps(abi, indent=4))
+            abi_file.write(str(abi))
 
     def set_blockchain_parameters(self, params: dict):
         return self.push_action(
@@ -1744,6 +1773,7 @@ class CLEOS:
     def register_producer(
         self,
         producer: str,
+        pub_key: str | None = None,
         key: str | None = None,
         url: str = '',
         location: int = 0
@@ -1756,12 +1786,16 @@ class CLEOS:
             'regproducer',
             [
                 producer,
-                key,
+                pub_key if pub_key else self.keys[producer],
                 url,
                 location
             ],
             producer,
-            key=self.private_keys[producer]
+            key=(
+                key
+                if key
+                else self.private_keys[producer]
+            )
         )
 
     def vote_producers(

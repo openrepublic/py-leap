@@ -296,9 +296,15 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
             cleos.wait_blocks(1)
 
         for account_name, location in contracts.items():
-            cleos.deploy_contract_from_path(account_name, location)
+            cleos.deploy_contract_from_path(
+                account_name,
+                location,
+                contract_name=account_name
+            )
 
         did_nodeos_launch = True
+
+        cleos.wait_blocks(1)
 
         yield cleos
 

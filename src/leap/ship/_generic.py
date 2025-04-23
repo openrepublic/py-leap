@@ -125,19 +125,17 @@ async def open_state_history(sh_args: StateHistoryArgs):
         # send get_blocks_request
         get_blocks_msg = standard.pack(
             'request',
-            [
-                'get_blocks_request_v0',
-                {
-                    'start_block_num': sh_args.start_block_num,
-                    'end_block_num': sh_args.end_block_num,
-                    'max_messages_in_flight': sh_args.max_messages_in_flight,
-                    'have_positions': [],
-                    'irreversible_only': sh_args.irreversible_only,
-                    'fetch_block': sh_args.fetch_block,
-                    'fetch_traces': sh_args.fetch_traces,
-                    'fetch_deltas': sh_args.fetch_deltas
-                }
-            ]
+            {
+                'type': 'get_blocks_request_v0',
+                'start_block_num': sh_args.start_block_num,
+                'end_block_num': sh_args.end_block_num,
+                'max_messages_in_flight': sh_args.max_messages_in_flight,
+                'have_positions': [],
+                'irreversible_only': sh_args.irreversible_only,
+                'fetch_block': sh_args.fetch_block,
+                'fetch_traces': sh_args.fetch_traces,
+                'fetch_deltas': sh_args.fetch_deltas
+            }
         )
         await ws.send_message(get_blocks_msg)
 

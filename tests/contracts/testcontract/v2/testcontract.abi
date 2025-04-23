@@ -48,6 +48,20 @@
                     "type": "string"
                 }
             ]
+        },
+        {
+            "name": "testversion",
+            "base": "",
+            "fields": [
+                {
+                    "name": "test",
+                    "type": "name"
+                },
+                {
+                    "name": "val",
+                    "type": "int64"
+                }
+            ]
         }
     ],
     "actions": [
@@ -64,6 +78,11 @@
         {
             "name": "checkripmd",
             "type": "checkripmd",
+            "ricardian_contract": ""
+        },
+        {
+            "name": "testversion",
+            "type": "testversion",
             "ricardian_contract": ""
         }
     ],

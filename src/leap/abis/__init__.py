@@ -15,10 +15,10 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 from pathlib import Path
 
-import antelope_rs
-
-ABI = antelope_rs.ABI
-
+from leap.protocol import (
+    ABI,
+    ShipABI
+)
 
 def _load_abi_file(p: Path) -> str:
     with open(p, 'r') as file:
@@ -26,9 +26,7 @@ def _load_abi_file(p: Path) -> str:
 
 package_dir = Path(__file__).parent
 
-
 ABI_PATHS: dict[str, Path] = {
-    'std': package_dir / 'std_abi.json',
     'eosio': package_dir / 'eosio.json',
     'eosio.token': package_dir / 'eosio.token.json',
 }
@@ -45,7 +43,9 @@ ABIS: dict[str, ABI] = {
     for account, abi_str in ABI_STRINGS.items()
 }
 
-
-standard = ABIS['std']
 system = ABIS['eosio']
 token = ABIS['eosio.token']
+
+standard = ShipABI.from_str(
+    _load_abi_file(package_dir / 'std_abi.json')
+)

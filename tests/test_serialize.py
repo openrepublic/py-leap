@@ -1,6 +1,17 @@
 import logging
 
-from leap.abis import standard
+from leap import CLEOS
+from leap.abis import standard, ABI
+
+
+def test_abi():
+    cleos = CLEOS(endpoint='https://testnet.telos.net')
+
+    # convert=False gets abi as dict from http call
+    raw_abi = cleos.get_abi('eosio', convert=False)
+
+    abi = ABI.from_bytes(raw_abi)
+    assert abi.encode() == raw_abi
 
 
 def test_ship():

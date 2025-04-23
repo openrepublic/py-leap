@@ -12,7 +12,7 @@ async def _main():
 
     cleos = CLEOS(endpoint=http_endpoint)
 
-    token_abi = cleos.get_abi('eosio.token', convert=True)
+    token_abi = cleos.get_abi('eosio.token')
 
     buckets: list[int] = []
     current_bucket = 0

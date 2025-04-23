@@ -1,0 +1,89 @@
+{
+    "____comment": "This file was generated with eosio-abigen. DO NOT EDIT ",
+    "version": "eosio::abi/1.2",
+    "types": [],
+    "structs": [
+        {
+            "name": "checkasset",
+            "base": "",
+            "fields": [
+                {
+                    "name": "ass",
+                    "type": "asset"
+                },
+                {
+                    "name": "checkam",
+                    "type": "int64"
+                }
+            ]
+        },
+        {
+            "name": "checkexasset",
+            "base": "",
+            "fields": [
+                {
+                    "name": "eass",
+                    "type": "extended_asset"
+                },
+                {
+                    "name": "contract",
+                    "type": "name"
+                },
+                {
+                    "name": "checkam",
+                    "type": "int64"
+                }
+            ]
+        },
+        {
+            "name": "checkripmd",
+            "base": "",
+            "fields": [
+                {
+                    "name": "val",
+                    "type": "checksum160?"
+                },
+                {
+                    "name": "check_str",
+                    "type": "string"
+                }
+            ]
+        },
+        {
+            "name": "testversion",
+            "base": "",
+            "fields": [
+                {
+                    "name": "val",
+                    "type": "int64"
+                }
+            ]
+        }
+    ],
+    "actions": [
+        {
+            "name": "checkasset",
+            "type": "checkasset",
+            "ricardian_contract": ""
+        },
+        {
+            "name": "checkexasset",
+            "type": "checkexasset",
+            "ricardian_contract": ""
+        },
+        {
+            "name": "checkripmd",
+            "type": "checkripmd",
+            "ricardian_contract": ""
+        },
+        {
+            "name": "testversion",
+            "type": "testversion",
+            "ricardian_contract": ""
+        }
+    ],
+    "tables": [],
+    "ricardian_clauses": [],
+    "variants": [],
+    "action_results": []
+}
