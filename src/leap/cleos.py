@@ -496,7 +496,7 @@ class CLEOS:
         self,
         account_name: str,
         wasm: bytes,
-        abi: dict,
+        abi: ABI,
         privileged: bool = False,
         create_account: bool = True,
         staked: bool = True
@@ -577,7 +577,7 @@ class CLEOS:
             'name': 'setabi',
             'data': [
                 account_name,
-                json.dumps(abi).encode('utf-8')
+                abi.encode()
             ],
             'authorization': [{
                 'actor': account_name,
@@ -623,7 +623,7 @@ class CLEOS:
 
         abi = None
         with open(contract_path / f'{contract_name}.abi', 'r') as abi_file:
-            abi = json_module.loads(abi_file.read())
+            abi = ABI.from_str(abi_file.read())
 
         return self.deploy_contract(
             account_name, wasm, abi, **kwargs)
@@ -664,7 +664,7 @@ class CLEOS:
 
         return wasm_hash, wasm
 
-    def get_abi(self, account_name: str, convert: bool = False) -> dict:
+    def get_abi(self, account_name: str, convert: bool = True) -> dict:
         '''Fetches the ABI (Application Binary Interface) for a given account.
 
         :param account_name: Account to get the ABI for
@@ -779,7 +779,7 @@ class CLEOS:
         account_name: str,
         download_location: str | Path,
         local_name: str | None = None,
-        abi: dict | None = None
+        abi: ABI | None = None
     ):
         '''Downloads the smart contract associated with a given account.
 
@@ -803,14 +803,14 @@ class CLEOS:
 
         _, wasm = self.get_code(account_name)
 
-        if not abi:
-            abi = self.get_abi(account_name)
-
         with open(download_location / f'{local_name}.wasm', 'wb+') as wasm_file:
             wasm_file.write(wasm)
 
+        if not abi:
+            abi = self.get_abi(account_name)
+
         with open(download_location / f'{local_name}.abi', 'w+') as abi_file:
-            abi_file.write(json.dumps(abi, indent=4))
+            abi_file.write(str(abi))
 
     def set_blockchain_parameters(self, params: dict):
         return self.push_action(
