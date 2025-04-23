@@ -479,7 +479,7 @@ wheels = [
 
 [[package]]
 name = "py-leap"
-version = "0.1a40"
+version = "0.1a41"
 source = { editable = "." }
 dependencies = [
     { name = "httpx", marker = "(platform_machine == 'arm64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'darwin') or (platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },

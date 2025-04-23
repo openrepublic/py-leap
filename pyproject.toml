@@ -1,6 +1,6 @@
 [project]
 name = "py-leap"
-version = "0.1a40"
+version = "0.1a41"
 description = "Antelope protocol framework"
 authors = [{ name = "Guillermo Rodriguez", email = "guillermo@telos.net" }]
 requires-python = ">=3.11"
