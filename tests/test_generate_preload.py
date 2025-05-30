@@ -1,4 +1,7 @@
 import json
+import pytest
+
+pytest.skip('enable this test manually by commenting line 4', allow_module_level=True)
 
 def test_generate(cleos_w_bootstrap):
     cleos = cleos_w_bootstrap

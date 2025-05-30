@@ -52,8 +52,8 @@ def maybe_get_marker(request, mark_name: str, field: str, default):
 
 @contextmanager
 def open_test_nodeos(request, tmp_path_factory):
-    if sys.platform != 'linux':
-        pytest.skip('Linux only')
+    # if sys.platform != 'linux':
+    #     pytest.skip('Linux only')
 
     tmp_path = tmp_path_factory.getbasetemp() / request.node.name
     leap_path = tmp_path / 'leap'
@@ -142,8 +142,8 @@ def open_test_nodeos(request, tmp_path_factory):
 
 @contextmanager
 def bootstrap_test_nodeos(request, tmp_path_factory):
-    if sys.platform != 'linux':
-        pytest.skip('Linux only')
+    # if sys.platform != 'linux':
+    #     pytest.skip('Linux only')
 
     tmp_path = tmp_path_factory.getbasetemp() / request.node.name
     leap_path = tmp_path / 'leap'
@@ -159,6 +159,9 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
     contracts = maybe_get_marker(
         request, 'contracts', 'kwargs', {})
 
+    extra_plugins: list[str] = list(maybe_get_marker(
+        request, 'extra_plugins', 'args', []))
+
     logging.info(f'created tmp path at {leap_path}')
 
     dclient = docker.from_env()
@@ -168,19 +171,28 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
 
     cmd = ['nodeos', '-e', '-p', 'eosio', '--config-dir', '/root', '--data-dir', '/root/data']
 
-    for plugin in [
+    for plugin in set([
         'net_plugin',
         'http_plugin',
         'chain_plugin',
         'producer_plugin',
         'chain_api_plugin',
         'producer_api_plugin'
-    ]:
+    ] + extra_plugins):
         cmd += ['--plugin', f'eosio::{plugin}']
 
     http_port = get_free_port() if randomize else 8888
     cmd += ['--http-server-address', '0.0.0.0:8888']
     cmd += ['--http-validate-host', '0']
+
+    extra_ports: dict[str, int] = {}
+    if 'state_history_plugin' in extra_plugins:
+        extra_ports['18999'] = get_free_port() if randomize else 18999
+        cmd += ['--state-history-endpoint', '0.0.0.0:18999']
+        cmd += ['--trace-history']
+        cmd += ['--chain-state-history']
+        cmd += ['--state-history-dir', 'state-history']
+        cmd += ['--trace-history-debug-mode']
 
     if randomize:
         priv, pub = antelope_rs.gen_key_pair(0)
@@ -237,7 +249,10 @@ def bootstrap_test_nodeos(request, tmp_path_factory):
         name=f'{tmp_path.name}-leap',
         detach=True,
         remove=True,
-        ports={'8888/tcp': http_port},
+        ports={
+            '8888/tcp': http_port,
+            **extra_ports
+        },
         mounts=[Mount('/root', str(leap_path), 'bind')],
         command=container_cmd
     )

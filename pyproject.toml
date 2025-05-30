@@ -1,6 +1,6 @@
 [project]
 name = "py-leap"
-version = "0.1a41"
+version = "0.1a42"
 description = "Antelope protocol framework"
 authors = [{ name = "Guillermo Rodriguez", email = "guillermo@telos.net" }]
 requires-python = ">=3.11"
@@ -102,4 +102,5 @@ markers = [
     'bootstrap: test requires full chain bootstrap',
     'contracts: specify contract you need deployed',
     'randomize: randomize eosio key and ports',
+    'extra_plugins: enable extra nodeos plugins'
 ]

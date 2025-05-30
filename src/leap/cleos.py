@@ -162,6 +162,7 @@ class CLEOS:
 
         if ChainHTTPError.is_json_error(maybe_error):
             err = ChainAPIError.from_json(maybe_error['error'])
+            self.logger.error(maybe_error)
             self.logger.error(repr(err))
             raise err
 
@@ -1830,7 +1831,7 @@ class CLEOS:
         :rtype: dict
         '''
         return self._post(
-            f'/v1/chain/get_producer_schedule')
+            '/v1/chain/get_producer_schedule')
 
     def get_producers(self):
         '''Fetches information on producers.
@@ -1856,9 +1857,11 @@ class CLEOS:
 
         rows = self.get_table(
             'eosio', 'eosio', 'producers',
-            '--key-type', 'name', '--index', '1',
-            '--lower', producer,
-            '--upper', producer)
+            key_type='name',
+            index_position=1,
+            lower_bound=producer,
+            upper_bound=producer
+        )
 
         if len(rows) == 0:
             return None
